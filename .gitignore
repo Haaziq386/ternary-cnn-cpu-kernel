@@ -21,7 +21,6 @@ env/
 part_A/data/
 part_A/*.pth
 part_A/*.npz
-part_A/results.json
 
 .codex
 
@@ -29,3 +28,4 @@ part_A/results.json
 part_B/build/
 part_B/model.bin
 part_B/ternary_infer
+part_B/DESIGN.md

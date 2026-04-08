@@ -1,0 +1,13 @@
+{
+  "baseline": {
+    "accuracy": 89.06,
+    "param_count": 272474,
+    "model_size_mb": 1.1386
+  },
+  "ternary": {
+    "accuracy": 88.2,
+    "param_count": 272474,
+    "model_size_mb": 1.138,
+    "sparsity": 0.3383
+  }
+}

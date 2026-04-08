@@ -1,0 +1,42 @@
+{
+  "latency": {
+    "pytorch_ternary": {
+      "mean_us": 1975.16,
+      "median_us": 1931.1,
+      "p99_us": 3312.89,
+      "min_us": 1437.25,
+      "max_us": 4379.04
+    },
+    "pytorch_baseline": {
+      "mean_us": 1114.39,
+      "median_us": 1064.95,
+      "p99_us": 1924.94,
+      "min_us": 797.87,
+      "max_us": 3367.65
+    },
+    "cpp_ternary": {
+      "mean_us": 5714.55,
+      "median_us": 5656.07,
+      "p99_us": 6843.96
+    }
+  },
+  "speedup": {
+    "cpp_vs_pytorch_ternary_mean": 0.35,
+    "cpp_vs_pytorch_ternary_median": 0.34,
+    "cpp_vs_pytorch_baseline_mean": 0.2,
+    "cpp_vs_pytorch_baseline_median": 0.19
+  },
+  "memory": {
+    "baseline_pth_kb": 1111.9,
+    "ternary_pth_kb": 1111.3,
+    "model_bin_kb": 280.1,
+    "python_peak_rss_mb": 4252.2,
+    "bin_vs_ternary_pth_ratio": 0.252,
+    "bin_vs_baseline_pth_ratio": 0.252
+  },
+  "config": {
+    "iters": 1000,
+    "warmup": 10,
+    "device": "cpu"
+  }
+}

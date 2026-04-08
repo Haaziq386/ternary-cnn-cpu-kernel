@@ -72,11 +72,14 @@ pip install torch torchvision numpy
 
 ## Run Part A
 
+Google Colab (Part A completed here):
+- https://colab.research.google.com/drive/1PWD7w80TcWyLHg2Q7tilTP_pUpgmUVzb?usp=sharing
+
 From repository root:
 
 ```bash
 cd part_A
-python train.py --model both --epochs 200 --batch-size 128 --data-root ./data
+python train.py --model both --epochs 30 --batch-size 128 --data-root ./data
 ```
 
 Optional arguments:
@@ -89,8 +92,8 @@ Optional arguments:
 Separate runs:
 
 ```bash
-python train.py --model baseline --epochs 200 --batch-size 128 --data-root ./data
-python train.py --model ternary --epochs 200 --batch-size 128 --data-root ./data
+python train.py --model baseline --epochs 30 --batch-size 128 --data-root ./data
+python train.py --model ternary --epochs 30 --batch-size 128 --data-root ./data
 ```
 
 ## Outputs
@@ -113,4 +116,5 @@ When you run a single model, only the matching checkpoint and metrics are genera
 
 - CIFAR-10 is downloaded automatically by torchvision when first run.
 - The first convolution (`conv1`) and projection shortcuts in residual blocks remain full precision.
-- Part B implementation is not yet documented here; this README will be extended when Part B is added.
+- Part B lives in [part_B/README.md](part_B/README.md).
+- Model trained for 30 epochs on google collab (reduced from 200 for time constraints). Full 200-epoch training would yield ~92% baseline / ~91% ternary per published ResNet-20 results. Kernel correctness and benchmarking are independent of training duration.

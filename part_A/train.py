@@ -17,7 +17,7 @@ from torch.utils.data import DataLoader
 from torchvision import datasets, transforms
 from resnet20 import ResNet20
 from ternary_layer import TernaryConv2d
-
+from google.colab import drive
 
 # ---------------------------------------------------------------------------
 # Data
@@ -215,11 +215,18 @@ def main():
     device = torch.device(args.device)
     print(f"Using device: {device}")
 
+    # # 1. Mount Google Drive
+    # drive.mount('/content/drive')
+    
+    # 2. Define your Drive folder (it will be created if it doesn't exist)
+    out_dir = '/content/drive/MyDrive/ternary_resnet_results'
+    if not os.path.exists(out_dir):
+        os.makedirs(out_dir)
+
     train_loader, test_loader = get_loaders(
         batch_size=args.batch_size, data_root=args.data_root
     )
 
-    out_dir = os.path.dirname(os.path.abspath(__file__))
     results = {}
 
     run_baseline = args.model in ("both", "baseline")

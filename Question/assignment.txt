@@ -1,0 +1,35 @@
+Stellon Labs Take-Home Assignment: 
+Ternary CNN Implementation 
+Overview 
+This assignment asks you to implement and compare a Convolutional Neural Network (CNN) 
+using ternary convolutions (weights constrained to {-1, 0, +1}) versus standard full-precision 
+convolutions, then create an optimized CPU implementation. 
+Key Components 
+1. Ternary Convolutions 
+● Instead of floating-point weights, convolutional layers use only three values: -1, 0, and 
++1 
+● This drastically reduces memory footprint (from 32 bits per weight to ~1.58 bits) 
+● Enables faster inference through simpler operations (no floating-point multiplications) 
+2. Tasks Required 
+Part A: Model Development (Python/PyTorch) 
+● Build a CNN architecture for CIFAR-10 classification. You can use a standard 
+architecture like ResNet.  
+● Implement ternary weight Conv Layer  
+Part B: Efficient CPU Implementation 
+● Write a high-performance C/C++ implementation for ternary convolution inference 
+● Make the implementation for either CPUs.  
+● Use SIMD operations for better performance 
+● Reference bitnet.cpp for implementation strategies 
+Part C: Benchmarking 
+● Measure inference time: Python/PyTorch vs. your C/C++ implementation 
+● Report speedup and efficiency gains 
+● Analyze memory usage differences 
+Skills Being Evaluated 
+● Deep learning knowledge (quantization, model compression) 
+● Systems programming (efficient low-level implementation) 
+● Performance optimization 
+This assignment tests both ML expertise and systems engineering capabilities, valuable for 
+roles involving on-device AI, edge computing, or model optimization. 
+The goal of this assignment is to show that you are capable of implementing efficient low level 
+code. We will be comparing the performance of your implementation with standard inference 
+engines and our reference implementation. 

@@ -112,16 +112,16 @@ sudo taskset -c 0 nice -n -20 ./build/ternary_infer model.bin --bench --iters 30
 
 | Implementation | mean (us) | median (us) | p99 (us) |
 |---|---|---|---|
-| PyTorch baseline (FP32) | 1620.58 | 1535.87 | 3070.63 |
-| PyTorch ternary (TernaryConv2d) | 2252.14 | 2132.05 | 3584.30 |
-| **C++ AVX2 ternary kernel** | **5547.78** | **5427.73** | **7781.68** |
+| PyTorch baseline (FP32) | 1696.7 | 1625.1 | 2707.9 |
+| PyTorch ternary (TernaryConv2d) | 2378.5 | 2235.4 | 4313.7 |
+| **C++ AVX2 ternary kernel** | **5083.1** | **5086.9** | **6275.6** |
 
 ### Speedup
 
 The C++ kernel is currently **slower** than PyTorch in this controlled setup:
 
-- vs PyTorch ternary: **0.41x** (mean), **0.39x** (median)
-- vs PyTorch baseline: **0.29x** (mean), **0.28x** (median)
+- vs PyTorch ternary: **0.47x** (mean), **0.44x** (median)
+- vs PyTorch baseline: **0.33x** (mean), **0.32x** (median)
 
 ### Memory / Model Size
 
@@ -137,15 +137,18 @@ The C++ kernel is currently **slower** than PyTorch in this controlled setup:
 ### Why C++ is slower here
 
 PyTorch dispatches `conv2d` on CPU to **oneDNN** (Intel's Deep Neural Network Library), which is a production-grade BLAS with:
-- Multi-threaded execution across all CPU cores by default
+- Multi-threaded execution across CPU cores and automatic work distribution
 - Decades of cache-blocking optimisation (Goto GEMM)
 - Hardware-specific codepaths tuned per microarchitecture
 
-The C++ kernel here is **single-threaded** and uses a naive `for oc { for spatial { dot_product() } }` loop with no GEMM-level cache tiling. This is a research/demonstration kernel, not a full inference engine.
+The C++ kernel here is **single-threaded** with basic (M,N) cache blocking:
+- Spatial tile (M): 64 elements
+- Channel tile (N): 32 output channels
+- Keeps per-channel weight rows (pos_bits, neg_bits) in L2 cache while processing activation tiles
 
-To close the gap the next steps would be: OpenMP parallelism across output channels, cache-blocked GEMM tiling (M×N×K tiles), and INT8 activation quantisation to use AVX-VNNI `vpdpbusd` for 4× throughput.
+This single-core optimization delivered **6.28% improvement** over non-blocked code. Further gains would require: OpenMP parallelism across output channels, deeper K-dimension blocking for activation reuse, and INT8 quantisation to use AVX-VNNI `vpdpbusd` (4× throughput).
 
-The **memory story is strong**: 4× smaller model file with the same accuracy, and zero floating-point multiplies in the hot path — the structural efficiency of ternary is real even if the single-threaded latency benchmark doesn't capture it here.
+The **memory story is strong**: 4× smaller model file with the same accuracy, zero floating-point multiplies in the hot path, and reduced memory bandwidth — the structural efficiency of ternary is real even if single-threaded latency doesn't match production libraries.
 
 ---
 

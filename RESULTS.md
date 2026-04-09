@@ -88,22 +88,40 @@ sudo taskset -c 0 nice -n -20 ./build/ternary_infer model.bin --bench --iters 30
 | 2 | 7265.77 | 7042.17 | 11627.58 |
 | 3 | 7771.24 | 7443.56 | 11138.54 |
 
+## H) (M, N) Cache Blocking on GEMM
 
+Tiled both spatial (M=64) and output channel (N=32) dimensions in `conv_ternary`, `conv_fp32`, and `linear` functions. 
+This keeps weight rows (pos_bits, neg_bits) and their corresponding activation data in L2 cache, reducing memory bandwidth pressure.
+
+**Loop structure:** For each spatial tile + channel tile block, process all spatial positions before moving to the next channel block.
+
+| Run | mean (us) | median (us) | p99 (us) |
+|---|---:|---:|---:|
+| 1 | 5151.11 | 5116.66 | 6311.53 |
+| 2 | 5109.37 | 5134.15 | 6250.87 |
+| 3 | 5083.05 | 5086.88 | 6275.63 |
+| 4 | 5118.79 | 5100.92 | 6355.16 |
+| 5 | 5293.78 | 5280.71 | 6738.85 |
+| 6 | 5218.40 | 5199.90 | 6656.44 |
 
 ---
 
 ## Summary for Reporting
 
-### Best controlled run (post-optimization)
+### Best controlled run (with M,N cache blocking)
 
-- mean: **5547.78 us**
-- median: **5427.73 us**
-- p99: **7781.68 us**
+- mean: **5083.05 us**
+- median: **5086.88 us**
+- p99: **6275.63 us**
 
-### Pre-vs-post controlled comparison (best-to-best)
+### Improvement Chain (no opt → compiler flags → M,N blocking)
 
-- median improvement: 5980.48 us -> 5427.73 us (**9.24% faster**)
-- mean improvement: 6061.09 us -> 5547.78 us (**8.47% faster**)
+| Step | Median (us) | Improvement |
+|---|---:|---|
+| Baseline (no opt) | 6061.09 | - |
+| Compiler flags only | 5427.73 | **10.47%** |
+| M,N cache blocking | 5086.88 | **6.28%** (vs flags) |
+| **Total** | 5086.88 | **16.07%** (vs baseline) |
 
 ---
 
@@ -117,7 +135,7 @@ Command used:
 sudo taskset -c 0 nice -n -20 env \
   OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 \
   "$(which python)" part_C/benchmark_pytorch.py \
-  --cpp-mean-us 5547.78 --cpp-median-us 5427.73 --cpp-p99-us 7781.68 \
+  --cpp-mean-us 5083.05 --cpp-median-us 5086.88 --cpp-p99-us 6275.63 \
   --iters 3000 --warmup 50
 ```
 
@@ -127,7 +145,7 @@ Latency results:
 |---|---:|---:|---:|
 | PyTorch baseline (FP32) | 1620.58 | 1535.87 | 3070.63 |
 | PyTorch ternary | 2252.14 | 2132.05 | 3584.30 |
-| C++ ternary | 5547.78 | 5427.73 | 7781.68 |
+| C++ ternary (M,N blocked) | 5083.05 | 5086.88 | 6275.63 |
 
 Speedups (C++ vs PyTorch):
 

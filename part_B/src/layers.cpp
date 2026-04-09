@@ -11,6 +11,9 @@ namespace ternary
     namespace
     {
 
+        constexpr int kSpatialTile = 64;
+        constexpr int kChannelTile = 32; // Tile output channels for L2 cache blocking
+
         int round_up(int value, int multiple)
         {
             return ((value + multiple - 1) / multiple) * multiple;
@@ -86,18 +89,27 @@ namespace ternary
         {
             const float *sample_cols = col_base + static_cast<std::size_t>(n) * output_spatial * k_pad;
             float *sample_out = out_base + static_cast<std::size_t>(n) * weights.out_channels * output_spatial;
-            for (int oc = 0; oc < weights.out_channels; ++oc)
+            // (M, N) cache blocking for FP32 convolution
+            for (int spatial_base = 0; spatial_base < output_spatial; spatial_base += kSpatialTile)
             {
-                const float *weight_row = weights.weight.data() + static_cast<std::size_t>(oc) * kernel_elements;
-                for (int spatial = 0; spatial < output_spatial; ++spatial)
+                const int spatial_end = std::min(spatial_base + kSpatialTile, output_spatial);
+                for (int oc_base = 0; oc_base < weights.out_channels; oc_base += kChannelTile)
                 {
-                    const float *activation_row = sample_cols + static_cast<std::size_t>(spatial) * k_pad;
-                    float value = dot_product_fp32_avx2(weight_row, activation_row, kernel_elements);
-                    if (weights.has_bias)
+                    const int oc_end = std::min(oc_base + kChannelTile, weights.out_channels);
+                    for (int spatial = spatial_base; spatial < spatial_end; ++spatial)
                     {
-                        value += weights.bias[oc];
+                        const float *activation_row = sample_cols + static_cast<std::size_t>(spatial) * k_pad;
+                        for (int oc = oc_base; oc < oc_end; ++oc)
+                        {
+                            const float *weight_row = weights.weight.data() + static_cast<std::size_t>(oc) * kernel_elements;
+                            float value = dot_product_fp32_avx2(weight_row, activation_row, kernel_elements);
+                            if (weights.has_bias)
+                            {
+                                value += weights.bias[oc];
+                            }
+                            sample_out[static_cast<std::size_t>(oc) * output_spatial + spatial] = value;
+                        }
                     }
-                    sample_out[static_cast<std::size_t>(oc) * output_spatial + spatial] = value;
                 }
             }
         }
@@ -119,17 +131,28 @@ namespace ternary
         {
             const float *sample_cols = col_base + static_cast<std::size_t>(n) * output_spatial * weights.k_pad;
             float *sample_out = out_base + static_cast<std::size_t>(n) * weights.out_channels * output_spatial;
-            for (int oc = 0; oc < weights.out_channels; ++oc)
+            // (M, N) cache blocking: tile both spatial and output channel dimensions
+            for (int spatial_base = 0; spatial_base < output_spatial; spatial_base += kSpatialTile)
             {
-                const std::uint8_t *pos_row = weights.pos_bits.data() + static_cast<std::size_t>(oc) * packed_bytes;
-                const std::uint8_t *neg_row = weights.neg_bits.data() + static_cast<std::size_t>(oc) * packed_bytes;
-                for (int spatial = 0; spatial < output_spatial; ++spatial)
+                const int spatial_end = std::min(spatial_base + kSpatialTile, output_spatial);
+                // Tile output channels for L2 cache locality
+                for (int oc_base = 0; oc_base < weights.out_channels; oc_base += kChannelTile)
                 {
-                    const float *activation_row = sample_cols + static_cast<std::size_t>(spatial) * weights.k_pad;
-                    float value = dot_product_ternary_avx2(activation_row, pos_row, neg_row, packed_bytes);
-                    sample_out[static_cast<std::size_t>(oc) * output_spatial + spatial] = fuse_relu
-                                                                                           ? std::max(0.0f, value * weights.scale[oc] + weights.bias[oc])
-                                                                                           : value * weights.scale[oc] + weights.bias[oc];
+                    const int oc_end = std::min(oc_base + kChannelTile, weights.out_channels);
+                    // Process spatial positions with a block of output channels
+                    for (int spatial = spatial_base; spatial < spatial_end; ++spatial)
+                    {
+                        const float *activation_row = sample_cols + static_cast<std::size_t>(spatial) * weights.k_pad;
+                        for (int oc = oc_base; oc < oc_end; ++oc)
+                        {
+                            const std::uint8_t *pos_row = weights.pos_bits.data() + static_cast<std::size_t>(oc) * packed_bytes;
+                            const std::uint8_t *neg_row = weights.neg_bits.data() + static_cast<std::size_t>(oc) * packed_bytes;
+                            float value = dot_product_ternary_avx2(activation_row, pos_row, neg_row, packed_bytes);
+                            sample_out[static_cast<std::size_t>(oc) * output_spatial + spatial] = fuse_relu
+                                                                                                      ? std::max(0.0f, value * weights.scale[oc] + weights.bias[oc])
+                                                                                                      : value * weights.scale[oc] + weights.bias[oc];
+                        }
+                    }
                 }
             }
         }
@@ -197,10 +220,15 @@ namespace ternary
         {
             const float *sample_in = input.ptr() + static_cast<std::size_t>(n) * features;
             float *sample_out = output.ptr() + static_cast<std::size_t>(n) * weights.out_features;
-            for (int oc = 0; oc < weights.out_features; ++oc)
+            // Tile output features for better L2 cache reuse
+            for (int oc_base = 0; oc_base < weights.out_features; oc_base += kChannelTile)
             {
-                const float *weight_row = weights.weight.data() + static_cast<std::size_t>(oc) * features;
-                sample_out[oc] = dot_product_fp32_avx2(sample_in, weight_row, features) + weights.bias[oc];
+                const int oc_end = std::min(oc_base + kChannelTile, weights.out_features);
+                for (int oc = oc_base; oc < oc_end; ++oc)
+                {
+                    const float *weight_row = weights.weight.data() + static_cast<std::size_t>(oc) * features;
+                    sample_out[oc] = dot_product_fp32_avx2(sample_in, weight_row, features) + weights.bias[oc];
+                }
             }
         }
     }

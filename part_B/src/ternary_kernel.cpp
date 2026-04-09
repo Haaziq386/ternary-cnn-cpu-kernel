@@ -96,9 +96,80 @@ namespace ternary
         return sum;
     }
 
+// TBLOCK(b): process byte group b (bytes b*4..b*4+3, floats b*32..b*32+31)
+// into 2+2 pos/neg accumulators. Depends on locals:
+//   activation, pos_bits, neg_bits, pos_acc0, pos_acc1, neg_acc0, neg_acc1.
+#define TBLOCK(b)                                                                                       \
+    {                                                                                                   \
+        const __m256 _xa = _mm256_loadu_ps(activation + (b)*32 + 0);                                   \
+        const __m256 _xb = _mm256_loadu_ps(activation + (b)*32 + 8);                                   \
+        const __m256 _xc = _mm256_loadu_ps(activation + (b)*32 + 16);                                  \
+        const __m256 _xd = _mm256_loadu_ps(activation + (b)*32 + 24);                                  \
+        pos_acc0 = _mm256_add_ps(pos_acc0, _mm256_and_ps(mask_to_ps(pos_bits[(b)*4 + 0]), _xa));       \
+        pos_acc0 = _mm256_add_ps(pos_acc0, _mm256_and_ps(mask_to_ps(pos_bits[(b)*4 + 1]), _xb));       \
+        pos_acc1 = _mm256_add_ps(pos_acc1, _mm256_and_ps(mask_to_ps(pos_bits[(b)*4 + 2]), _xc));       \
+        pos_acc1 = _mm256_add_ps(pos_acc1, _mm256_and_ps(mask_to_ps(pos_bits[(b)*4 + 3]), _xd));       \
+        neg_acc0 = _mm256_add_ps(neg_acc0, _mm256_and_ps(mask_to_ps(neg_bits[(b)*4 + 0]), _xa));       \
+        neg_acc0 = _mm256_add_ps(neg_acc0, _mm256_and_ps(mask_to_ps(neg_bits[(b)*4 + 1]), _xb));       \
+        neg_acc1 = _mm256_add_ps(neg_acc1, _mm256_and_ps(mask_to_ps(neg_bits[(b)*4 + 2]), _xc));       \
+        neg_acc1 = _mm256_add_ps(neg_acc1, _mm256_and_ps(mask_to_ps(neg_bits[(b)*4 + 3]), _xd));       \
+    }
+
+    // packed_bytes=20: layer1 3x3 (16ch*9=144, k_pad=160) and layer2.0.conv1 (16ch in)
+    float dot_ternary_k20(const float *activation, const std::uint8_t *pos_bits,
+                          const std::uint8_t *neg_bits)
+    {
+        __m256 pos_acc0 = _mm256_setzero_ps();
+        __m256 pos_acc1 = _mm256_setzero_ps();
+        __m256 neg_acc0 = _mm256_setzero_ps();
+        __m256 neg_acc1 = _mm256_setzero_ps();
+        TBLOCK(0) TBLOCK(1) TBLOCK(2) TBLOCK(3) TBLOCK(4)
+        return horizontal_sum(pos_acc0) + horizontal_sum(pos_acc1)
+             - horizontal_sum(neg_acc0) - horizontal_sum(neg_acc1);
+    }
+
+    // packed_bytes=36: layer2 3x3 (32ch*9=288, k_pad=288) and layer3.0.conv1 (32ch in)
+    float dot_ternary_k36(const float *activation, const std::uint8_t *pos_bits,
+                          const std::uint8_t *neg_bits)
+    {
+        __m256 pos_acc0 = _mm256_setzero_ps();
+        __m256 pos_acc1 = _mm256_setzero_ps();
+        __m256 neg_acc0 = _mm256_setzero_ps();
+        __m256 neg_acc1 = _mm256_setzero_ps();
+        TBLOCK(0) TBLOCK(1) TBLOCK(2) TBLOCK(3) TBLOCK(4)
+        TBLOCK(5) TBLOCK(6) TBLOCK(7) TBLOCK(8)
+        return horizontal_sum(pos_acc0) + horizontal_sum(pos_acc1)
+             - horizontal_sum(neg_acc0) - horizontal_sum(neg_acc1);
+    }
+
+    // packed_bytes=72: layer3 3x3 (64ch*9=576, k_pad=576)
+    float dot_ternary_k72(const float *activation, const std::uint8_t *pos_bits,
+                          const std::uint8_t *neg_bits)
+    {
+        __m256 pos_acc0 = _mm256_setzero_ps();
+        __m256 pos_acc1 = _mm256_setzero_ps();
+        __m256 neg_acc0 = _mm256_setzero_ps();
+        __m256 neg_acc1 = _mm256_setzero_ps();
+        TBLOCK( 0) TBLOCK( 1) TBLOCK( 2) TBLOCK( 3) TBLOCK( 4)
+        TBLOCK( 5) TBLOCK( 6) TBLOCK( 7) TBLOCK( 8) TBLOCK( 9)
+        TBLOCK(10) TBLOCK(11) TBLOCK(12) TBLOCK(13) TBLOCK(14)
+        TBLOCK(15) TBLOCK(16) TBLOCK(17)
+        return horizontal_sum(pos_acc0) + horizontal_sum(pos_acc1)
+             - horizontal_sum(neg_acc0) - horizontal_sum(neg_acc1);
+    }
+
+#undef TBLOCK
+
     float dot_product_ternary_avx2(const float *activation, const std::uint8_t *pos_bits,
                                    const std::uint8_t *neg_bits, int packed_bytes)
     {
+        switch (packed_bytes)
+        {
+            case 20: return dot_ternary_k20(activation, pos_bits, neg_bits);
+            case 36: return dot_ternary_k36(activation, pos_bits, neg_bits);
+            case 72: return dot_ternary_k72(activation, pos_bits, neg_bits);
+            default: break;
+        }
         __m256 pos_acc0 = _mm256_setzero_ps();
         __m256 pos_acc1 = _mm256_setzero_ps();
         __m256 neg_acc0 = _mm256_setzero_ps();

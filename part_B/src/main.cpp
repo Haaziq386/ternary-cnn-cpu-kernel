@@ -140,6 +140,7 @@ int main(int argc, char **argv)
             std::cout << std::fixed << std::setprecision(6)
                       << "OK: " << matches << "/" << probabilities.n
                       << " top-1 matches, max probability diff = " << diff << "\n";
+            std::cout << "Note: INT8 path - max diff vs FP32 reference may be 1e-2 to 1e-3\n";
             return 0;
         }
 

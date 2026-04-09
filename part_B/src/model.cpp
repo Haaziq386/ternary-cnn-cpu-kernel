@@ -280,10 +280,12 @@ namespace ternary
 
     void prepare_scratch(const ResNet20Weights &model, int batch_size, InferenceScratch &scratch)
     {
+        const std::size_t im2col_capacity = estimate_im2col_capacity(model, batch_size);
         scratch.a.reserve(static_cast<std::size_t>(batch_size) * 16 * 32 * 32);
         scratch.b.reserve(static_cast<std::size_t>(batch_size) * 16 * 32 * 32);
         scratch.c.reserve(static_cast<std::size_t>(batch_size) * 16 * 32 * 32);
-        scratch.im2col.reserve(estimate_im2col_capacity(model, batch_size));
+        scratch.im2col.reserve(im2col_capacity);
+        scratch.im2col_int8.reserve(im2col_capacity);
     }
 
     std::size_t estimate_im2col_capacity(const ResNet20Weights &model, int batch_size)

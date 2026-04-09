@@ -37,9 +37,9 @@ namespace ternary
                 proj_out = &scratch.a;
             }
 
-            conv_ternary(*current, block.conv1, *conv1_out, scratch.im2col);
+            conv_ternary(*current, block.conv1, *conv1_out, scratch.im2col, scratch.im2col_int8);
             relu_inplace(*conv1_out);
-            conv_ternary(*conv1_out, block.conv2, *conv2_out, scratch.im2col);
+            conv_ternary(*conv1_out, block.conv2, *conv2_out, scratch.im2col, scratch.im2col_int8);
             if (block.has_projection)
             {
                 conv_fp32(*current, block.projection, *proj_out, scratch.im2col);

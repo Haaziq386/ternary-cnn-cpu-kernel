@@ -1,6 +1,7 @@
 #include "ternary_kernel.h"
 
 #include <immintrin.h>
+#include <array>
 
 namespace ternary
 {
@@ -62,6 +63,42 @@ namespace ternary
             return _mm_cvtss_f32(sum);
         }
 
+        const std::array<std::uint64_t, 256> kMaskTableInt8 = []
+        {
+            std::array<std::uint64_t, 256> table{};
+            for (int byte = 0; byte < 256; ++byte)
+            {
+                std::uint64_t packed = 0;
+                for (int bit = 0; bit < 8; ++bit)
+                {
+                    const std::uint64_t lane = ((byte >> bit) & 0x1) ? std::uint64_t{1} : std::uint64_t{0};
+                    packed |= (lane << (bit * 8));
+                }
+                table[byte] = packed;
+            }
+            return table;
+        }();
+
+        inline __m256i expand_4bytes_to_u8x32(const std::uint8_t *bits)
+        {
+            const std::uint64_t v0 = kMaskTableInt8[bits[0]];
+            const std::uint64_t v1 = kMaskTableInt8[bits[1]];
+            const std::uint64_t v2 = kMaskTableInt8[bits[2]];
+            const std::uint64_t v3 = kMaskTableInt8[bits[3]];
+            return _mm256_set_epi64x(static_cast<long long>(v3), static_cast<long long>(v2),
+                                     static_cast<long long>(v1), static_cast<long long>(v0));
+        }
+
+        inline int hadd_int32(__m256i value)
+        {
+            const __m128i low = _mm256_castsi256_si128(value);
+            const __m128i high = _mm256_extracti128_si256(value, 1);
+            __m128i sum = _mm_add_epi32(low, high);
+            sum = _mm_hadd_epi32(sum, sum);
+            sum = _mm_hadd_epi32(sum, sum);
+            return _mm_cvtsi128_si32(sum);
+        }
+
     } // namespace
 
     float dot_product_fp32_avx2(const float *lhs, const float *rhs, int length)
@@ -96,43 +133,57 @@ namespace ternary
         return sum;
     }
 
-    float dot_product_ternary_avx2(const float *activation, const std::uint8_t *pos_bits,
-                                   const std::uint8_t *neg_bits, int packed_bytes)
+    __attribute__((target("avxvnni"))) float dot_product_ternary_vnni(const std::int8_t *activation_int8, const std::uint8_t *pos_bits,
+                                                                      const std::uint8_t *neg_bits, int packed_bytes)
     {
-        __m256 pos_acc0 = _mm256_setzero_ps();
-        __m256 pos_acc1 = _mm256_setzero_ps();
-        __m256 neg_acc0 = _mm256_setzero_ps();
-        __m256 neg_acc1 = _mm256_setzero_ps();
-
+        __m256i pos_acc0 = _mm256_setzero_si256();
+        __m256i pos_acc1 = _mm256_setzero_si256();
+        __m256i neg_acc0 = _mm256_setzero_si256();
+        __m256i neg_acc1 = _mm256_setzero_si256();
         int index = 0;
-#if defined(__GNUC__)
-#pragma GCC unroll 4
-#endif
+
+        for (; index + 7 < packed_bytes; index += 8)
+        {
+            const __m256i act0 = _mm256_loadu_si256(reinterpret_cast<const __m256i *>(activation_int8 + index * 8));
+            const __m256i act1 = _mm256_loadu_si256(reinterpret_cast<const __m256i *>(activation_int8 + index * 8 + 32));
+
+            const __m256i pos_mask0 = expand_4bytes_to_u8x32(pos_bits + index);
+            const __m256i neg_mask0 = expand_4bytes_to_u8x32(neg_bits + index);
+            const __m256i pos_mask1 = expand_4bytes_to_u8x32(pos_bits + index + 4);
+            const __m256i neg_mask1 = expand_4bytes_to_u8x32(neg_bits + index + 4);
+
+            pos_acc0 = _mm256_dpbusd_avx_epi32(pos_acc0, pos_mask0, act0);
+            neg_acc0 = _mm256_dpbusd_avx_epi32(neg_acc0, neg_mask0, act0);
+            pos_acc1 = _mm256_dpbusd_avx_epi32(pos_acc1, pos_mask1, act1);
+            neg_acc1 = _mm256_dpbusd_avx_epi32(neg_acc1, neg_mask1, act1);
+        }
+
         for (; index + 3 < packed_bytes; index += 4)
         {
-            const __m256 x0 = _mm256_loadu_ps(activation + index * 8);
-            const __m256 x1 = _mm256_loadu_ps(activation + index * 8 + 8);
-            const __m256 x2 = _mm256_loadu_ps(activation + index * 8 + 16);
-            const __m256 x3 = _mm256_loadu_ps(activation + index * 8 + 24);
-
-            pos_acc0 = _mm256_add_ps(pos_acc0, _mm256_and_ps(mask_to_ps(pos_bits[index]), x0));
-            pos_acc0 = _mm256_add_ps(pos_acc0, _mm256_and_ps(mask_to_ps(pos_bits[index + 1]), x1));
-            pos_acc1 = _mm256_add_ps(pos_acc1, _mm256_and_ps(mask_to_ps(pos_bits[index + 2]), x2));
-            pos_acc1 = _mm256_add_ps(pos_acc1, _mm256_and_ps(mask_to_ps(pos_bits[index + 3]), x3));
-
-            neg_acc0 = _mm256_add_ps(neg_acc0, _mm256_and_ps(mask_to_ps(neg_bits[index]), x0));
-            neg_acc0 = _mm256_add_ps(neg_acc0, _mm256_and_ps(mask_to_ps(neg_bits[index + 1]), x1));
-            neg_acc1 = _mm256_add_ps(neg_acc1, _mm256_and_ps(mask_to_ps(neg_bits[index + 2]), x2));
-            neg_acc1 = _mm256_add_ps(neg_acc1, _mm256_and_ps(mask_to_ps(neg_bits[index + 3]), x3));
+            const __m256i act = _mm256_loadu_si256(reinterpret_cast<const __m256i *>(activation_int8 + index * 8));
+            const __m256i pos_mask = expand_4bytes_to_u8x32(pos_bits + index);
+            const __m256i neg_mask = expand_4bytes_to_u8x32(neg_bits + index);
+            pos_acc0 = _mm256_dpbusd_avx_epi32(pos_acc0, pos_mask, act);
+            neg_acc0 = _mm256_dpbusd_avx_epi32(neg_acc0, neg_mask, act);
         }
 
-        float sum = horizontal_sum(pos_acc0) + horizontal_sum(pos_acc1) - horizontal_sum(neg_acc0) - horizontal_sum(neg_acc1);
+        int pos_sum = hadd_int32(_mm256_add_epi32(pos_acc0, pos_acc1));
+        int neg_sum = hadd_int32(_mm256_add_epi32(neg_acc0, neg_acc1));
+
         for (; index < packed_bytes; ++index)
         {
-            const __m256 x = _mm256_loadu_ps(activation + index * 8);
-            sum += horizontal_sum(_mm256_and_ps(mask_to_ps(pos_bits[index]), x));
-            sum -= horizontal_sum(_mm256_and_ps(mask_to_ps(neg_bits[index]), x));
+            const std::uint8_t p = pos_bits[index];
+            const std::uint8_t n = neg_bits[index];
+            const std::int8_t *act = activation_int8 + index * 8;
+            for (int bit = 0; bit < 8; ++bit)
+            {
+                const int a = static_cast<int>(act[bit]);
+                pos_sum += ((p >> bit) & 0x1) ? a : 0;
+                neg_sum += ((n >> bit) & 0x1) ? a : 0;
+            }
         }
+
+        const float sum = static_cast<float>(pos_sum - neg_sum);
         return sum;
     }
 
@@ -200,4 +251,3 @@ Extend to 4+4 accumulators in dot_product_ternary_avx2 -> bad results.
 
 } // namespace ternary
 */
-

@@ -24,6 +24,7 @@ else()
         -DNDEBUG
         -march=native
         -mavx2
+        -mavxvnni
         -mfma
         -mbmi2
         -funroll-loops

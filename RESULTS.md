@@ -115,6 +115,17 @@ This avoids redundant memory writes before real copy work.
 | 2 | 4975.75 | 4922.14 | 7035.28 |
 | 3 | 5002.16 | 4901.09 | 7260.47 |
 
+## J) INT8 Activation Quantization + AVX-VNNI (vpdpbusd) -no improvements
+
+Replaced float ternary accumulation with INT8 activation quantization and AVX-VNNI dot-product path.
+This variant prioritized throughput-focused kernel changes over FP32 parity.
+
+| Run | mean (us) | median (us) | p99 (us) |
+|---|---:|---:|---:|
+| 1 | 5595.59 | 5473.02 | 8376.85 |
+| 2 | 5802.85 | 5611.45 | 8848.65 |
+| 3 | 5475.24 | 5389.14 | 7560.26 |
+
 ---
 
 ## Summary for Reporting

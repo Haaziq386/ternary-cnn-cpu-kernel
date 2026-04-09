@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cassert>
+#include <cmath>
 #include <immintrin.h>
 
 #include "ternary_kernel.h"
@@ -13,6 +14,7 @@ namespace ternary
 
         constexpr int kSpatialTile = 64;
         constexpr int kChannelTile = 32; // Tile output channels for L2 cache blocking
+        constexpr float kActQuantScale = 32.0f;
 
         int round_up(int value, int multiple)
         {
@@ -118,7 +120,8 @@ namespace ternary
     }
 
     void conv_ternary(const Tensor &input, const TernaryConv2DWeights &weights, Tensor &output,
-                      std::vector<float> &im2col_buffer, bool fuse_relu)
+                      std::vector<float> &im2col_buffer, std::vector<std::int8_t> &im2col_int8,
+                      bool fuse_relu)
     {
         output.resize(input.n, weights.out_channels, weights.output_h, weights.output_w);
         im2col(input, weights.kernel_h, weights.kernel_w, weights.stride_h, weights.stride_w,
@@ -132,6 +135,23 @@ namespace ternary
         for (int n = 0; n < input.n; ++n)
         {
             const float *sample_cols = col_base + static_cast<std::size_t>(n) * output_spatial * weights.k_pad;
+            const int total_packed = output_spatial * weights.k_pad;
+            const float act_scale = kActQuantScale;
+            const float act_scale_inv = 1.0f / kActQuantScale;
+
+            if (im2col_int8.size() < static_cast<std::size_t>(total_packed))
+            {
+                im2col_int8.resize(static_cast<std::size_t>(total_packed));
+            }
+            for (int i = 0; i < total_packed; ++i)
+            {
+                int q = static_cast<int>(sample_cols[i] * act_scale);
+                q = q > 127 ? 127 : q;
+                q = q < -127 ? -127 : q;
+                im2col_int8[static_cast<std::size_t>(i)] = static_cast<std::int8_t>(q);
+            }
+            const std::int8_t *col_int8 = im2col_int8.data();
+
             float *sample_out = out_base + static_cast<std::size_t>(n) * weights.out_channels * output_spatial;
             // (M, N) cache blocking: tile both spatial and output channel dimensions
             for (int spatial_base = 0; spatial_base < output_spatial; spatial_base += kSpatialTile)
@@ -144,15 +164,16 @@ namespace ternary
                     // Process spatial positions with a block of output channels
                     for (int spatial = spatial_base; spatial < spatial_end; ++spatial)
                     {
-                        const float *activation_row = sample_cols + static_cast<std::size_t>(spatial) * weights.k_pad;
+                        const std::int8_t *activation_row_int8 = col_int8 + static_cast<std::size_t>(spatial) * weights.k_pad;
                         for (int oc = oc_base; oc < oc_end; ++oc)
                         {
                             const std::uint8_t *pos_row = weights.pos_bits.data() + static_cast<std::size_t>(oc) * packed_bytes;
                             const std::uint8_t *neg_row = weights.neg_bits.data() + static_cast<std::size_t>(oc) * packed_bytes;
-                            float value = dot_product_ternary_avx2(activation_row, pos_row, neg_row, packed_bytes);
+                            const float raw = dot_product_ternary_vnni(activation_row_int8, pos_row, neg_row, packed_bytes);
+                            const float value = raw * act_scale_inv * weights.scale[oc] + weights.bias[oc];
                             sample_out[static_cast<std::size_t>(oc) * output_spatial + spatial] = fuse_relu
-                                                                                                      ? std::max(0.0f, value * weights.scale[oc] + weights.bias[oc])
-                                                                                                      : value * weights.scale[oc] + weights.bias[oc];
+                                                                                                      ? std::max(0.0f, value)
+                                                                                                      : value;
                         }
                     }
                 }

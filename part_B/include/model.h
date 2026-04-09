@@ -85,6 +85,7 @@ namespace ternary
         Tensor b;
         Tensor c;
         std::vector<float> im2col;
+        std::vector<std::int8_t> im2col_int8;
     };
 
     ResNet20Weights load_model(const std::string &path);

@@ -115,6 +115,15 @@ This avoids redundant memory writes before real copy work.
 | 2 | 4975.75 | 4922.14 | 7035.28 |
 | 3 | 5002.16 | 4901.09 | 7260.47 |
 
+## J) Shape-specialized ternary kernels -- Not good results
+
+| Run | mean (us) | median (us) | p99 (us) |
+|---|---:|---:|---:|
+| 1 | 6626.96 | 6221.48 | 10541.08 |
+| 2 | 6348.81 | 6112.96 | 9271.09 |
+| 3 | 6797.03 | 6541.09 | 10035.73 |
+| 4 | 6372.54 | 6346.56 | 7916.85 |
+
 ---
 
 ## Summary for Reporting

@@ -19,5 +19,21 @@ target_include_directories(ternary_infer PRIVATE include)
 if (MSVC)
     target_compile_options(ternary_infer PRIVATE /O2)
 else()
-    target_compile_options(ternary_infer PRIVATE -O3 -DNDEBUG -march=native -mavx2 -mfma -mbmi2 -funroll-loops -fno-math-errno)
+    target_compile_options(ternary_infer PRIVATE
+        -O3
+        -DNDEBUG
+        -march=native
+        -mavx2
+        -mfma
+        -mbmi2
+        -funroll-loops
+        -fno-math-errno
+        -fomit-frame-pointer
+        -ffp-contract=fast
+    )
+    include(CheckIPOSupported)
+    check_ipo_supported(RESULT ipo_supported OUTPUT ipo_error)
+    if (ipo_supported)
+        set_property(TARGET ternary_infer PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
+    endif()
 endif()

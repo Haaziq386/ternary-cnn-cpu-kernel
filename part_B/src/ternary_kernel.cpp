@@ -71,10 +71,13 @@ namespace ternary
         __m256 acc2 = _mm256_setzero_ps();
         __m256 acc3 = _mm256_setzero_ps();
         int index = 0;
+#if defined(__GNUC__)
+#pragma GCC unroll 4
+#endif
         for (; index + 31 < length; index += 32)
         {
-            acc0 = _mm256_fmadd_ps(_mm256_loadu_ps(lhs + index),      _mm256_loadu_ps(rhs + index),      acc0);
-            acc1 = _mm256_fmadd_ps(_mm256_loadu_ps(lhs + index + 8),  _mm256_loadu_ps(rhs + index + 8),  acc1);
+            acc0 = _mm256_fmadd_ps(_mm256_loadu_ps(lhs + index), _mm256_loadu_ps(rhs + index), acc0);
+            acc1 = _mm256_fmadd_ps(_mm256_loadu_ps(lhs + index + 8), _mm256_loadu_ps(rhs + index + 8), acc1);
             acc2 = _mm256_fmadd_ps(_mm256_loadu_ps(lhs + index + 16), _mm256_loadu_ps(rhs + index + 16), acc2);
             acc3 = _mm256_fmadd_ps(_mm256_loadu_ps(lhs + index + 24), _mm256_loadu_ps(rhs + index + 24), acc3);
         }
@@ -102,6 +105,9 @@ namespace ternary
         __m256 neg_acc1 = _mm256_setzero_ps();
 
         int index = 0;
+#if defined(__GNUC__)
+#pragma GCC unroll 4
+#endif
         for (; index + 3 < packed_bytes; index += 4)
         {
             const __m256 x0 = _mm256_loadu_ps(activation + index * 8);

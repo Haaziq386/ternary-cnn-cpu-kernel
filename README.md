@@ -33,11 +33,22 @@ python convert_weights.py ../part_A/ternary_weights.npz ../part_A/ternary.pth mo
 # Benchmark: single-image latency
 ./build/ternary_infer model.bin --bench --iters 1000 --warmup 10
 
+# For stable single-core latency testing
+sudo taskset -c 0 nice -n -20 ./build/ternary_infer model.bin --bench --iters 3000 --warmup 50
+
 # Part C — benchmark PyTorch and compare
 cd ../part_C
 python benchmark_pytorch.py \
   --cpp-mean-us 5714.55 --cpp-median-us 5656.07 --cpp-p99-us 6843.96 \
   --iters 1000 --warmup 10
+
+# For stable single-core latency testing
+cd ../part_C
+sudo taskset -c 0 nice -n -20 env \
+  OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 \
+  "$(which python)" benchmark_pytorch.py \
+  --cpp-mean-us <YOUR_CPP_MEAN> --cpp-median-us <YOUR_CPP_MEDIAN> --cpp-p99-us <YOUR_CPP_P99> \
+  --iters 3000 --warmup 50
 ```
 
 Google Colab (Part A training):
@@ -89,19 +100,28 @@ OK: 16/16 top-1 matches, max probability diff = 0.000003
 
 ## Part C — Benchmark Results
 
-Single-image CPU inference, single-threaded, 1000 iterations with 10 warmup. Full results in `part_C/results.json`.
+README shows only the best controlled single-core C++ result. Full benchmark history is in [RESULTS.md](RESULTS.md).
+
+Controlled C++ method:
+
+```bash
+sudo taskset -c 0 nice -n -20 ./build/ternary_infer model.bin --bench --iters 3000 --warmup 50
+```
 
 ### Latency
 
-| Implementation | mean (µs) | median (µs) | p99 (µs) |
+| Implementation | mean (us) | median (us) | p99 (us) |
 |---|---|---|---|
-| PyTorch baseline (FP32) | 1114 | 1065 | 1925 |
-| PyTorch ternary (TernaryConv2d) | 1975 | 1931 | 3313 |
-| **C++ AVX2 ternary kernel** | **5715** | **5656** | **6844** |
+| PyTorch baseline (FP32) | 1620.58 | 1535.87 | 3070.63 |
+| PyTorch ternary (TernaryConv2d) | 2252.14 | 2132.05 | 3584.30 |
+| **C++ AVX2 ternary kernel** | **5547.78** | **5427.73** | **7781.68** |
 
 ### Speedup
 
-The C++ kernel is currently **slower** than PyTorch (~0.35× vs PyTorch ternary, ~0.19× vs baseline). See the note below.
+The C++ kernel is currently **slower** than PyTorch in this controlled setup:
+
+- vs PyTorch ternary: **0.41x** (mean), **0.39x** (median)
+- vs PyTorch baseline: **0.29x** (mean), **0.28x** (median)
 
 ### Memory / Model Size
 
@@ -110,6 +130,7 @@ The C++ kernel is currently **slower** than PyTorch (~0.35× vs PyTorch ternary,
 | `baseline.pth` (FP32 weights) | 1111.9 KB |
 | `ternary.pth` (FP32 storage, ternary values) | 1111.3 KB |
 | `model.bin` (packed ternary, 2 bits/weight) | 280.1 KB |
+| `python` peak RSS during benchmark | 3087.4 MB |
 
 `model.bin` is **4× smaller** than `ternary.pth` — the ternary packing (dual bitmaps + folded BN) compresses conv weights from 32 bits/weight to 2 bits/weight.
 
@@ -137,6 +158,13 @@ pip install torch torchvision numpy
 ```
 
 C++ build requires CMake 3.16+ and a GCC/Clang with AVX2 support.
+
+---
+
+## System Configurations:
+- Benchmarked on Intel i7-12650H (Alder Lake, AVX2 + AVX-VNNI) under WSL2.
+- Median latency reported; WSL scheduling introduces ~2-5% run-to-run variance.
+- Latest benchmark config: 3000 iterations, 50 warmup, CPU mode.
 
 ---
 

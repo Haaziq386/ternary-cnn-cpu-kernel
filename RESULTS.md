@@ -19,6 +19,12 @@ The top-level README only reports the best controlled result.
 - Environment: pinned to one core with high priority
 - Notes: this is the reported method for Part B latency numbers
 
+### Controlled multi-core runs (OpenMP)
+
+- Command: `sudo taskset -c 0-5 nice -n -20 env OMP_NUM_THREADS=6 ./build/ternary_infer model.bin --bench --iters 3000 --warmup 50`
+- Environment: pinned to 6 cores with explicit OpenMP thread count
+- Notes: use this to measure multi-core `conv_ternary` scaling separately from single-core reference numbers
+
 ---
 
 ## Raw Run History
@@ -115,6 +121,24 @@ This avoids redundant memory writes before real copy work.
 | 2 | 4975.75 | 4922.14 | 7035.28 |
 | 3 | 5002.16 | 4901.09 | 7260.47 |
 
+## J) OpenMP in `conv_ternary` (6-thread controlled runs)
+
+Applied OpenMP work-sharing to `conv_ternary` output-channel work with one persistent parallel region to reduce repeated thread launch overhead.
+
+Command:
+
+```bash
+sudo taskset -c 0-5 nice -n -20 env OMP_NUM_THREADS=6 \
+  ./build/ternary_infer model.bin --bench --iters 3000 --warmup 50
+```
+
+| Run | mean (us) | median (us) | p99 (us) |
+|---|---:|---:|---:|
+| 1 | 4348.28 | 4101.54 | 7285.92 |
+| 2 | 4782.36 | 4550.23 | 7983.69 |
+| 3 | 4259.65 | 3995.04 | 7028.06 |
+| 4 | 4474.71 | 4150.84 | 7515.81 |
+
 ---
 
 ## Summary for Reporting
@@ -124,6 +148,13 @@ This avoids redundant memory writes before real copy work.
 - mean: **4945.87 us**
 - median: **4862.89 us**
 - p99: **6674.15 us**
+
+### Best controlled OpenMP run (6 threads)
+
+- mean: **4259.65 us**
+- median: **3995.04 us**
+- p99: **7028.06 us**
+- vs current single-core reference (5106.85 us median): **21.78% lower median latency**
 
 ### Improvement Chain (no opt → compiler flags → M,N blocking → im2col fast path)
 
@@ -137,17 +168,16 @@ This avoids redundant memory writes before real copy work.
 
 ---
 
-## Latest Controlled Cross-Framework Comparison
+## Latest Cross-Framework Comparison (OpenMP run)
 
-Source: `part_C/results.json` generated via pinned single-core command.
+Source: `part_C/results.json` generated from the latest command below.
 
 Command used:
 
 ```bash
-sudo taskset -c 0 nice -n -20 env \
-  OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 \
+OMP_NUM_THREADS=6 MKL_NUM_THREADS=6 OPENBLAS_NUM_THREADS=6 \
   "$(which python)" part_C/benchmark_pytorch.py \
-  --cpp-mean-us 4945.87 --cpp-median-us 4862.89 --cpp-p99-us 6674.15 \
+  --cpp-mean-us 4259.65 --cpp-median-us 3995.04 --cpp-p99-us 7028.06 \
   --iters 3000 --warmup 50
 ```
 
@@ -155,21 +185,21 @@ Latency results:
 
 | Implementation | mean (us) | median (us) | p99 (us) |
 |---|---:|---:|---:|
-| PyTorch baseline (FP32) | 1781.8 | 1582.6 | 3791.9 |
-| PyTorch ternary | 2469.8 | 2188.0 | 5320.3 |
-| C++ ternary (M,N blocked + im2col fast path) | 4945.87 | 4862.89 | 6674.15 |
+| PyTorch baseline (FP32) | 1596.9 | 1480.2 | 3711.5 |
+| PyTorch ternary | 2838.4 | 2589.6 | 5699.9 |
+| C++ ternary (OpenMP, 6 threads) | 4259.65 | 3995.04 | 7028.06 |
 
 Speedups (C++ vs PyTorch):
 
-- vs PyTorch ternary: 0.50x (mean), 0.45x (median)
-- vs PyTorch baseline: 0.36x (mean), 0.33x (median)
+- vs PyTorch ternary: 0.67x (mean), 0.65x (median)
+- vs PyTorch baseline: 0.37x (mean), 0.37x (median)
 
 Memory outputs from `part_C/results.json`:
 
 - baseline.pth: 1111.9 KB
 - ternary.pth: 1111.3 KB
 - model.bin: 280.1 KB
-- Python peak RSS during benchmark: 3087.3 MB
+- Python peak RSS during benchmark: 3649.1 MB
 
 Note: C++ inference peak RSS can be measured with:
 
@@ -183,12 +213,24 @@ This prints the process memory high-water mark (`Maximum resident set size`) for
 
 ## Reproducibility Notes
 
-1. Use the controlled single-core command for any final number.
-2. Run at least 3 trials and report best plus variance-aware context.
-3. If comparing with PyTorch, apply the same control method:
+1. Keep single-core and multi-core runs in separate tables; do not mix them.
+2. Use the controlled single-core command for final reference reporting.
+3. Use the controlled multi-core command for OpenMP scaling reporting.
+4. Run at least 3 trials and report best plus variance-aware context.
+5. If comparing with PyTorch, apply matching control methods:
 
 ```bash
+# Single-core
 sudo taskset -c 0 nice -n -20 env \
   OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 \
+  "$(which python)" part_C/benchmark_pytorch.py --cpp-mean-us <mean> --cpp-median-us <median> --cpp-p99-us <p99> --iters 3000 --warmup 50
+
+# Multi-core (6 threads)
+sudo taskset -c 0-5 nice -n -20 env \
+  OMP_NUM_THREADS=6 MKL_NUM_THREADS=6 OPENBLAS_NUM_THREADS=6 \
+  "$(which python)" part_C/benchmark_pytorch.py --cpp-mean-us <mean> --cpp-median-us <median> --cpp-p99-us <p99> --iters 3000 --warmup 50
+
+# Environment-only threaded run (no taskset pinning)
+OMP_NUM_THREADS=6 MKL_NUM_THREADS=6 OPENBLAS_NUM_THREADS=6 \
   "$(which python)" part_C/benchmark_pytorch.py --cpp-mean-us <mean> --cpp-median-us <median> --cpp-p99-us <p99> --iters 3000 --warmup 50
 ```

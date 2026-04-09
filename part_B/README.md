@@ -24,8 +24,17 @@ python convert_weights.py ../part_A/ternary_weights.npz ../part_A/ternary.pth mo
 
 ## Benchmark
 
+### Single-core (reference)
+
 ```bash
-./build/ternary_infer model.bin --bench --iters 1000 --warmup 10
+sudo taskset -c 0 nice -n -20 ./build/ternary_infer model.bin --bench --iters 3000 --warmup 50
+```
+
+### Multi-core OpenMP (6 threads)
+
+```bash
+OMP_NUM_THREADS=6 taskset -c 0-5 ./build/ternary_infer model.bin \
+	--bench --iters 3000 --warmup 50
 ```
 
 The validation path compares output probabilities against `sample_outputs` from Part A.

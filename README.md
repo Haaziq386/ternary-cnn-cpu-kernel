@@ -33,8 +33,12 @@ python convert_weights.py ../part_A/ternary_weights.npz ../part_A/ternary.pth mo
 # Benchmark: single-image latency
 ./build/ternary_infer model.bin --bench --iters 1000 --warmup 10
 
-# For stable single-core latency testing
+# Part B benchmark (controlled single-core)
 sudo taskset -c 0 nice -n -20 ./build/ternary_infer model.bin --bench --iters 3000 --warmup 50
+
+# Part B benchmark (OpenMP multi-core, 6 threads)
+sudo taskset -c 0-5 nice -n -20 env OMP_NUM_THREADS=6 \
+  ./build/ternary_infer model.bin --bench --iters 3000 --warmup 50
 
 # Part C — benchmark PyTorch and compare
 cd ../part_C
@@ -42,10 +46,18 @@ python benchmark_pytorch.py \
   --cpp-mean-us 5714.55 --cpp-median-us 5656.07 --cpp-p99-us 6843.96 \
   --iters 1000 --warmup 10
 
-# For stable single-core latency testing
+# Part C comparison (controlled single-core)
 cd ../part_C
 sudo taskset -c 0 nice -n -20 env \
   OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 \
+  "$(which python)" benchmark_pytorch.py \
+  --cpp-mean-us <YOUR_CPP_MEAN> --cpp-median-us <YOUR_CPP_MEDIAN> --cpp-p99-us <YOUR_CPP_P99> \
+  --iters 3000 --warmup 50
+
+# Part C comparison (controlled multi-core, 6 threads)
+cd ../part_C
+taskset -c 0-5 nice -n -20 env \
+  OMP_NUM_THREADS=6 MKL_NUM_THREADS=6 OPENBLAS_NUM_THREADS=6 \
   "$(which python)" benchmark_pytorch.py \
   --cpp-mean-us <YOUR_CPP_MEAN> --cpp-median-us <YOUR_CPP_MEDIAN> --cpp-p99-us <YOUR_CPP_P99> \
   --iters 3000 --warmup 50
@@ -100,28 +112,34 @@ OK: 16/16 top-1 matches, max probability diff = 0.000003
 
 ## Part C — Benchmark Results
 
-README shows only the best controlled single-core C++ result. Full benchmark history is in [RESULTS.md](RESULTS.md).
+README shows the best controlled single-core C++ result. Full benchmark history is in [RESULTS.md](RESULTS.md).
 
-Controlled C++ method:
+Controlled C++ methods:
 
 ```bash
+# Single-core reference (used for reported table below)
 sudo taskset -c 0 nice -n -20 ./build/ternary_infer model.bin --bench --iters 3000 --warmup 50
+
+# Multi-core OpenMP (6 threads)
+sudo taskset -c 0-5 nice -n -20 env OMP_NUM_THREADS=6 \
+  ./build/ternary_infer model.bin --bench --iters 3000 --warmup 50
 ```
 
 ### Latency
 
 | Implementation | mean (us) | median (us) | p99 (us) |
 |---|---|---|---|
-| PyTorch baseline (FP32) | 1781.8 | 1582.6 | 3791.9 |
-| PyTorch ternary (TernaryConv2d) | 2469.8 | 2188.0 | 5320.3 |
-| **C++ AVX2 ternary kernel** | **4945.9** | **4862.9** | **6674.2** |
+| PyTorch baseline (FP32) | 1596.9 | 1480.2 | 3711.5 |
+| PyTorch ternary (TernaryConv2d) | 2838.4 | 2589.6 | 5699.9 |
+| **C++ AVX2 ternary (OpenMP, 6 threads, best run)** | **4259.7** | **3995.0** | **7028.1** |
 
 ### Speedup
 
-The C++ kernel is currently **slower** than PyTorch in this controlled setup:
+The C++ kernel is still **slower** than PyTorch in this controlled setup, but OpenMP improved C++ latency vs its single-core reference.
 
-- vs PyTorch ternary: **0.50x** (mean), **0.45x** (median)
-- vs PyTorch baseline: **0.36x** (mean), **0.33x** (median)
+- C++ OpenMP vs C++ single-core: **1.21x** (mean), **1.28x** (median)
+- C++ OpenMP vs PyTorch ternary: **0.67x** (mean), **0.65x** (median)
+- C++ OpenMP vs PyTorch baseline: **0.37x** (mean), **0.37x** (median)
 
 ### Memory / Model Size
 
@@ -141,14 +159,16 @@ PyTorch dispatches `conv2d` on CPU to **oneDNN** (Intel's Deep Neural Network Li
 - Decades of cache-blocking optimisation (Goto GEMM)
 - Hardware-specific codepaths tuned per microarchitecture
 
-The C++ kernel here is **single-threaded** with basic (M,N) cache blocking:
+The C++ kernel here uses basic (M,N) cache blocking plus OpenMP parallelism in `conv_ternary` (output-channel tiles). The table above reports the **single-core** reference path for a strict apples-to-apples baseline.
+
+Single-core structure:
 - Spatial tile (M): 64 elements
 - Channel tile (N): 32 output channels
 - Keeps per-channel weight rows (pos_bits, neg_bits) in L2 cache while processing activation tiles
 
-The kernel also applies an im2col fast path: no blanket full-buffer zero-fill, zeros are written only for out-of-bounds elements and k-padding tail. Combined with (M,N) blocking, this delivered **19.77% median improvement** vs baseline.
+The kernel also applies an im2col fast path: no blanket full-buffer zero-fill, zeros are written only for out-of-bounds elements and k-padding tail. Combined with (M,N) blocking, this delivered **19.77% median improvement** vs baseline. Full run history (single-core and OpenMP) is in [RESULTS.md](RESULTS.md).
 
-Further gains would require: OpenMP parallelism across output channels, deeper K-dimension blocking for activation reuse, and INT8 quantisation to use AVX-VNNI `vpdpbusd` (4× throughput).
+Further gains would require: broader OpenMP parallelism beyond `conv_ternary`, deeper K-dimension blocking for activation reuse, and INT8 quantisation to use AVX-VNNI `vpdpbusd` (4× throughput).
 
 The **memory story is strong**: 4× smaller model file with the same accuracy, zero floating-point multiplies in the hot path, and reduced memory bandwidth — the structural efficiency of ternary is real even if single-threaded latency doesn't match production libraries.
 

@@ -16,6 +16,11 @@ add_executable(ternary_infer
 
 target_include_directories(ternary_infer PRIVATE include)
 
+find_package(OpenMP)
+if(OpenMP_CXX_FOUND)
+    target_link_libraries(ternary_infer OpenMP::OpenMP_CXX)
+endif()
+
 if (MSVC)
     target_compile_options(ternary_infer PRIVATE /O2)
 else()

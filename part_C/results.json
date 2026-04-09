@@ -1,36 +1,36 @@
 {
   "latency": {
     "pytorch_ternary": {
-      "mean_us": 2234.65,
-      "median_us": 2114.17,
-      "p99_us": 3761.88,
-      "min_us": 1862.8,
-      "max_us": 6598.3
+      "mean_us": 2838.39,
+      "median_us": 2589.62,
+      "p99_us": 5699.95,
+      "min_us": 2089.62,
+      "max_us": 78297.81
     },
     "pytorch_baseline": {
-      "mean_us": 1693.02,
-      "median_us": 1555.53,
-      "p99_us": 3323.6,
-      "min_us": 1330.1,
-      "max_us": 10881.66
+      "mean_us": 1596.86,
+      "median_us": 1480.23,
+      "p99_us": 3711.5,
+      "min_us": 1119.77,
+      "max_us": 9440.37
     },
     "cpp_ternary": {
-      "mean_us": 4945.87,
-      "median_us": 4862.89,
-      "p99_us": 6674.15
+      "mean_us": 4259.65,
+      "median_us": 3995.04,
+      "p99_us": 7028.06
     }
   },
   "speedup": {
-    "cpp_vs_pytorch_ternary_mean": 0.45,
-    "cpp_vs_pytorch_ternary_median": 0.43,
-    "cpp_vs_pytorch_baseline_mean": 0.34,
-    "cpp_vs_pytorch_baseline_median": 0.32
+    "cpp_vs_pytorch_ternary_mean": 0.67,
+    "cpp_vs_pytorch_ternary_median": 0.65,
+    "cpp_vs_pytorch_baseline_mean": 0.37,
+    "cpp_vs_pytorch_baseline_median": 0.37
   },
   "memory": {
     "baseline_pth_kb": 1111.9,
     "ternary_pth_kb": 1111.3,
     "model_bin_kb": 280.1,
-    "python_peak_rss_mb": 3087.3,
+    "python_peak_rss_mb": 3649.1,
     "bin_vs_ternary_pth_ratio": 0.252,
     "bin_vs_baseline_pth_ratio": 0.252
   },

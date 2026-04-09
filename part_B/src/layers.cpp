@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cassert>
 #include <immintrin.h>
+#include <omp.h>
 
 #include "ternary_kernel.h"
 
@@ -129,26 +130,26 @@ namespace ternary
         const int packed_bytes = weights.k_pad / 8;
         const float *col_base = im2col_buffer.data();
         float *out_base = output.ptr();
-        for (int n = 0; n < input.n; ++n)
+#pragma omp parallel
         {
-            const float *sample_cols = col_base + static_cast<std::size_t>(n) * output_spatial * weights.k_pad;
-            float *sample_out = out_base + static_cast<std::size_t>(n) * weights.out_channels * output_spatial;
-            // (M, N) cache blocking: tile both spatial and output channel dimensions
-            for (int spatial_base = 0; spatial_base < output_spatial; spatial_base += kSpatialTile)
+            for (int n = 0; n < input.n; ++n)
             {
-                const int spatial_end = std::min(spatial_base + kSpatialTile, output_spatial);
-                // Tile output channels for L2 cache locality
-                for (int oc_base = 0; oc_base < weights.out_channels; oc_base += kChannelTile)
+                const float *sample_cols = col_base + static_cast<std::size_t>(n) * output_spatial * weights.k_pad;
+                float *sample_out = out_base + static_cast<std::size_t>(n) * weights.out_channels * output_spatial;
+                // (M, N) cache blocking: outer loop over spatial tiles
+                for (int spatial_base = 0; spatial_base < output_spatial; spatial_base += kSpatialTile)
                 {
-                    const int oc_end = std::min(oc_base + kChannelTile, weights.out_channels);
-                    // Process spatial positions with a block of output channels
-                    for (int spatial = spatial_base; spatial < spatial_end; ++spatial)
+                    const int spatial_end = std::min(spatial_base + kSpatialTile, output_spatial);
+// Distribute output channels across threads
+#pragma omp for schedule(static)
+                    for (int oc = 0; oc < weights.out_channels; ++oc)
                     {
-                        const float *activation_row = sample_cols + static_cast<std::size_t>(spatial) * weights.k_pad;
-                        for (int oc = oc_base; oc < oc_end; ++oc)
+                        const std::uint8_t *pos_row = weights.pos_bits.data() + static_cast<std::size_t>(oc) * packed_bytes;
+                        const std::uint8_t *neg_row = weights.neg_bits.data() + static_cast<std::size_t>(oc) * packed_bytes;
+                        // Process the spatial tile for this output channel
+                        for (int spatial = spatial_base; spatial < spatial_end; ++spatial)
                         {
-                            const std::uint8_t *pos_row = weights.pos_bits.data() + static_cast<std::size_t>(oc) * packed_bytes;
-                            const std::uint8_t *neg_row = weights.neg_bits.data() + static_cast<std::size_t>(oc) * packed_bytes;
+                            const float *activation_row = sample_cols + static_cast<std::size_t>(spatial) * weights.k_pad;
                             float value = dot_product_ternary_avx2(activation_row, pos_row, neg_row, packed_bytes);
                             sample_out[static_cast<std::size_t>(oc) * output_spatial + spatial] = fuse_relu
                                                                                                       ? std::max(0.0f, value * weights.scale[oc] + weights.bias[oc])

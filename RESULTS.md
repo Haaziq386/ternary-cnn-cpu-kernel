@@ -61,12 +61,6 @@ sudo taskset -c 0 nice -n -20 ./build/ternary_infer model.bin --bench --iters 30
 
 ### E) Controlled single-core (after compiler-flag tuning)
 
-Command:
-
-```bash
-sudo taskset -c 0 nice -n -20 ./build/ternary_infer model.bin --bench --iters 3000 --warmup 50
-```
-
 | Run | mean (us) | median (us) | p99 (us) |
 |---|---:|---:|---:|
 | 1 | 5688.79 | 5485.02 | 8725.57 |
@@ -84,6 +78,17 @@ sudo taskset -c 0 nice -n -20 ./build/ternary_infer model.bin --bench --iters 30
 | 2 | 5881.63 | 5799.51 | 7414.91 |
 | 3 | 5760.36 | 5707.11 | 7283.31 |
 | 4 | 5884.69 | 5823.44 | 7567.69 |
+
+### G) Extend to 4+4 accumulators in dot_product_ternary_avx2
+
+
+| Run | mean (us) | median (us) | p99 (us) |
+|---|---:|---:|---:|
+| 1 | 7113.75 | 6957.43 | 10375.63 |
+| 2 | 7265.77 | 7042.17 | 11627.58 |
+| 3 | 7771.24 | 7443.56 | 11138.54 |
+
+
 
 ---
 

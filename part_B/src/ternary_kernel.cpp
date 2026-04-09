@@ -137,3 +137,67 @@ namespace ternary
     }
 
 } // namespace ternary
+
+/*
+Extend to 4+4 accumulators in dot_product_ternary_avx2 -> bad results.
+
+    float dot_product_ternary_avx2(const float *activation, const std::uint8_t *pos_bits,
+                                   const std::uint8_t *neg_bits, int packed_bytes)
+    {
+        __m256 pos_acc0 = _mm256_setzero_ps();
+        __m256 pos_acc1 = _mm256_setzero_ps();
+        __m256 pos_acc2 = _mm256_setzero_ps();
+        __m256 pos_acc3 = _mm256_setzero_ps();
+        __m256 neg_acc0 = _mm256_setzero_ps();
+        __m256 neg_acc1 = _mm256_setzero_ps();
+        __m256 neg_acc2 = _mm256_setzero_ps();
+        __m256 neg_acc3 = _mm256_setzero_ps();
+
+        int index = 0;
+#if defined(__GNUC__)
+#pragma GCC unroll 4
+#endif
+        for (; index + 7 < packed_bytes; index += 8)
+        {
+            const __m256 x0 = _mm256_loadu_ps(activation + index * 8);
+            const __m256 x1 = _mm256_loadu_ps(activation + index * 8 + 8);
+            const __m256 x2 = _mm256_loadu_ps(activation + index * 8 + 16);
+            const __m256 x3 = _mm256_loadu_ps(activation + index * 8 + 24);
+            const __m256 x4 = _mm256_loadu_ps(activation + index * 8 + 32);
+            const __m256 x5 = _mm256_loadu_ps(activation + index * 8 + 40);
+            const __m256 x6 = _mm256_loadu_ps(activation + index * 8 + 48);
+            const __m256 x7 = _mm256_loadu_ps(activation + index * 8 + 56);
+
+            pos_acc0 = _mm256_add_ps(pos_acc0, _mm256_and_ps(mask_to_ps(pos_bits[index]), x0));
+            pos_acc0 = _mm256_add_ps(pos_acc0, _mm256_and_ps(mask_to_ps(pos_bits[index + 1]), x1));
+            pos_acc1 = _mm256_add_ps(pos_acc1, _mm256_and_ps(mask_to_ps(pos_bits[index + 2]), x2));
+            pos_acc1 = _mm256_add_ps(pos_acc1, _mm256_and_ps(mask_to_ps(pos_bits[index + 3]), x3));
+            pos_acc2 = _mm256_add_ps(pos_acc2, _mm256_and_ps(mask_to_ps(pos_bits[index + 4]), x4));
+            pos_acc2 = _mm256_add_ps(pos_acc2, _mm256_and_ps(mask_to_ps(pos_bits[index + 5]), x5));
+            pos_acc3 = _mm256_add_ps(pos_acc3, _mm256_and_ps(mask_to_ps(pos_bits[index + 6]), x6));
+            pos_acc3 = _mm256_add_ps(pos_acc3, _mm256_and_ps(mask_to_ps(pos_bits[index + 7]), x7));
+
+            neg_acc0 = _mm256_add_ps(neg_acc0, _mm256_and_ps(mask_to_ps(neg_bits[index]), x0));
+            neg_acc0 = _mm256_add_ps(neg_acc0, _mm256_and_ps(mask_to_ps(neg_bits[index + 1]), x1));
+            neg_acc1 = _mm256_add_ps(neg_acc1, _mm256_and_ps(mask_to_ps(neg_bits[index + 2]), x2));
+            neg_acc1 = _mm256_add_ps(neg_acc1, _mm256_and_ps(mask_to_ps(neg_bits[index + 3]), x3));
+            neg_acc2 = _mm256_add_ps(neg_acc2, _mm256_and_ps(mask_to_ps(neg_bits[index + 4]), x4));
+            neg_acc2 = _mm256_add_ps(neg_acc2, _mm256_and_ps(mask_to_ps(neg_bits[index + 5]), x5));
+            neg_acc3 = _mm256_add_ps(neg_acc3, _mm256_and_ps(mask_to_ps(neg_bits[index + 6]), x6));
+            neg_acc3 = _mm256_add_ps(neg_acc3, _mm256_and_ps(mask_to_ps(neg_bits[index + 7]), x7));
+        }
+
+        float sum = horizontal_sum(pos_acc0) + horizontal_sum(pos_acc1) + horizontal_sum(pos_acc2) + horizontal_sum(pos_acc3) -
+                    horizontal_sum(neg_acc0) - horizontal_sum(neg_acc1) - horizontal_sum(neg_acc2) - horizontal_sum(neg_acc3);
+        for (; index < packed_bytes; ++index)
+        {
+            const __m256 x = _mm256_loadu_ps(activation + index * 8);
+            sum += horizontal_sum(_mm256_and_ps(mask_to_ps(pos_bits[index]), x));
+            sum -= horizontal_sum(_mm256_and_ps(mask_to_ps(neg_bits[index]), x));
+        }
+        return sum;
+    }
+
+} // namespace ternary
+*/
+

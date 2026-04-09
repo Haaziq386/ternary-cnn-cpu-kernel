@@ -112,16 +112,16 @@ sudo taskset -c 0 nice -n -20 ./build/ternary_infer model.bin --bench --iters 30
 
 | Implementation | mean (us) | median (us) | p99 (us) |
 |---|---|---|---|
-| PyTorch baseline (FP32) | 1696.7 | 1625.1 | 2707.9 |
-| PyTorch ternary (TernaryConv2d) | 2378.5 | 2235.4 | 4313.7 |
-| **C++ AVX2 ternary kernel** | **5083.1** | **5086.9** | **6275.6** |
+| PyTorch baseline (FP32) | 1781.8 | 1582.6 | 3791.9 |
+| PyTorch ternary (TernaryConv2d) | 2469.8 | 2188.0 | 5320.3 |
+| **C++ AVX2 ternary kernel** | **4945.9** | **4862.9** | **6674.2** |
 
 ### Speedup
 
 The C++ kernel is currently **slower** than PyTorch in this controlled setup:
 
-- vs PyTorch ternary: **0.47x** (mean), **0.44x** (median)
-- vs PyTorch baseline: **0.33x** (mean), **0.32x** (median)
+- vs PyTorch ternary: **0.50x** (mean), **0.45x** (median)
+- vs PyTorch baseline: **0.36x** (mean), **0.33x** (median)
 
 ### Memory / Model Size
 
@@ -130,7 +130,7 @@ The C++ kernel is currently **slower** than PyTorch in this controlled setup:
 | `baseline.pth` (FP32 weights) | 1111.9 KB |
 | `ternary.pth` (FP32 storage, ternary values) | 1111.3 KB |
 | `model.bin` (packed ternary, 2 bits/weight) | 280.1 KB |
-| `python` peak RSS during benchmark | 3087.4 MB |
+| `python` peak RSS during benchmark | 3087.3 MB |
 
 `model.bin` is **4× smaller** than `ternary.pth` — the ternary packing (dual bitmaps + folded BN) compresses conv weights from 32 bits/weight to 2 bits/weight.
 
@@ -146,7 +146,9 @@ The C++ kernel here is **single-threaded** with basic (M,N) cache blocking:
 - Channel tile (N): 32 output channels
 - Keeps per-channel weight rows (pos_bits, neg_bits) in L2 cache while processing activation tiles
 
-This single-core optimization delivered **6.28% improvement** over non-blocked code. Further gains would require: OpenMP parallelism across output channels, deeper K-dimension blocking for activation reuse, and INT8 quantisation to use AVX-VNNI `vpdpbusd` (4× throughput).
+The kernel also applies an im2col fast path: no blanket full-buffer zero-fill, zeros are written only for out-of-bounds elements and k-padding tail. Combined with (M,N) blocking, this delivered **19.77% median improvement** vs baseline.
+
+Further gains would require: OpenMP parallelism across output channels, deeper K-dimension blocking for activation reuse, and INT8 quantisation to use AVX-VNNI `vpdpbusd` (4× throughput).
 
 The **memory story is strong**: 4× smaller model file with the same accuracy, zero floating-point multiplies in the hot path, and reduced memory bandwidth — the structural efficiency of ternary is real even if single-threaded latency doesn't match production libraries.
 

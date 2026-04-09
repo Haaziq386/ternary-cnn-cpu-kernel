@@ -33,8 +33,6 @@ namespace ternary
             {
                 im2col_buffer.resize(required);
             }
-            std::fill(im2col_buffer.begin(), im2col_buffer.begin() + required, 0.0f);
-
             for (int n = 0; n < batch; ++n)
             {
                 const float *input_base = input.ptr() + static_cast<std::size_t>(n) * channels * input_h * input_w;
@@ -56,6 +54,10 @@ namespace ternary
                                     {
                                         const std::size_t input_index = static_cast<std::size_t>(channel) * input_h * input_w + in_y * input_w + in_x;
                                         dst[col_index] = input_base[input_index];
+                                    }
+                                    else
+                                    {
+                                        dst[col_index] = 0.0f;
                                     }
                                     ++col_index;
                                 }

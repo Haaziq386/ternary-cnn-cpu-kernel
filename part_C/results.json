@@ -1,18 +1,18 @@
 {
   "latency": {
     "pytorch_ternary": {
-      "mean_us": 2252.14,
-      "median_us": 2132.05,
-      "p99_us": 3584.3,
-      "min_us": 1892.35,
-      "max_us": 10559.62
+      "mean_us": 2474.59,
+      "median_us": 2167.58,
+      "p99_us": 6223.67,
+      "min_us": 1866.02,
+      "max_us": 16319.87
     },
     "pytorch_baseline": {
-      "mean_us": 1620.58,
-      "median_us": 1535.87,
-      "p99_us": 3070.63,
-      "min_us": 1327.96,
-      "max_us": 5105.57
+      "mean_us": 1652.34,
+      "median_us": 1542.59,
+      "p99_us": 3054.51,
+      "min_us": 1331.74,
+      "max_us": 14324.78
     },
     "cpp_ternary": {
       "mean_us": 5547.78,
@@ -21,16 +21,16 @@
     }
   },
   "speedup": {
-    "cpp_vs_pytorch_ternary_mean": 0.41,
-    "cpp_vs_pytorch_ternary_median": 0.39,
-    "cpp_vs_pytorch_baseline_mean": 0.29,
+    "cpp_vs_pytorch_ternary_mean": 0.45,
+    "cpp_vs_pytorch_ternary_median": 0.4,
+    "cpp_vs_pytorch_baseline_mean": 0.3,
     "cpp_vs_pytorch_baseline_median": 0.28
   },
   "memory": {
     "baseline_pth_kb": 1111.9,
     "ternary_pth_kb": 1111.3,
     "model_bin_kb": 280.1,
-    "python_peak_rss_mb": 3087.4,
+    "python_peak_rss_mb": 3087.3,
     "bin_vs_ternary_pth_ratio": 0.252,
     "bin_vs_baseline_pth_ratio": 0.252
   },

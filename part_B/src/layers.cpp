@@ -104,7 +104,7 @@ namespace ternary
     }
 
     void conv_ternary(const Tensor &input, const TernaryConv2DWeights &weights, Tensor &output,
-                      std::vector<float> &im2col_buffer)
+                      std::vector<float> &im2col_buffer, bool fuse_relu)
     {
         output.resize(input.n, weights.out_channels, weights.output_h, weights.output_w);
         im2col(input, weights.kernel_h, weights.kernel_w, weights.stride_h, weights.stride_w,
@@ -127,7 +127,9 @@ namespace ternary
                 {
                     const float *activation_row = sample_cols + static_cast<std::size_t>(spatial) * weights.k_pad;
                     float value = dot_product_ternary_avx2(activation_row, pos_row, neg_row, packed_bytes);
-                    sample_out[static_cast<std::size_t>(oc) * output_spatial + spatial] = value * weights.scale[oc] + weights.bias[oc];
+                    sample_out[static_cast<std::size_t>(oc) * output_spatial + spatial] = fuse_relu
+                                                                                           ? std::max(0.0f, value * weights.scale[oc] + weights.bias[oc])
+                                                                                           : value * weights.scale[oc] + weights.bias[oc];
                 }
             }
         }

@@ -281,6 +281,48 @@ for t in 1 2 4 6; do OMP_NUM_THREADS=$t ./build/ternary_infer model.bin --bench 
 
 The code still scales well from 1 to 4 threads, but gains flatten by 6 threads. That suggests the hot path is no longer compute-only; memory traffic and/or OpenMP overhead are starting to dominate. Due to a WSL architectural constraint (Microsoft WSL2 kernel PMU exposure), `perf` cannot provide IPC, cache-miss, or bandwidth counters here, so deeper hardware-counter bottleneck analysis is not possible on this host.
 
+## R) ONNX Runtime FP32 benchmark (CPUExecutionProvider)
+
+Commands:
+
+```bash
+cd part_C
+python export_onnx.py --opset 18
+python benchmark_onnx.py --iters 3000 --warmup 50
+```
+
+Run used for reporting:
+
+| Implementation | mean (us) | median (us) | p99 (us) |
+|---|---:|---:|---:|
+| ORT FP32 baseline | 919.2 | 855.8 | 1633.4 |
+| ORT FP32 ternary (frozen weights) | 857.9 | 807.6 | 1515.7 |
+
+Speedup context (same README reference values):
+
+- ORT baseline vs PyTorch baseline: **1.95x** (mean), **1.99x** (median)
+- ORT ternary vs PyTorch ternary: **3.88x** (mean), **3.82x** (median)
+- ORT ternary vs C++ AVX2 ternary (OpenMP, 6 threads): **2.42x** (mean), **2.21x** (median)
+
+Model-size efficiency from ONNX export:
+
+| Artifact | Size |
+|---|---:|
+| baseline.pth | 1111.9 KB |
+| ternary.pth | 1111.3 KB |
+| baseline_fp32.onnx | 84.3 KB |
+| ternary_fp32.onnx | 237.6 KB |
+| model.bin (packed ternary) | 280.1 KB |
+
+- `baseline_fp32.onnx` is **13.19x smaller** than `baseline.pth` (**92.4% smaller**).
+- `ternary_fp32.onnx` is **4.68x smaller** than `ternary.pth` (**78.6% smaller**).
+
+Exporter warning note:
+
+- The long traceback you saw is from opset down-conversion (18 -> 17) attempted by the exporter toolchain.
+- Export is still valid if you see `verified: max_diff=...` for both models and `onnx.checker` passes.
+- Using `--opset 18` avoids the conversion attempt and removes that noisy warning path.
+
 ---
 
 ## Summary for Reporting

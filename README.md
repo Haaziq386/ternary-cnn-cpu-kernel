@@ -46,6 +46,10 @@ python benchmark_pytorch.py \
   --cpp-mean-us 2077.00 --cpp-median-us 1788.39 --cpp-p99-us 3885.26 \
   --iters 3000 --warmup 50
 
+# Part C — export ONNX models and benchmark ONNX Runtime (FP32)
+python export_onnx.py --opset 18
+python benchmark_onnx.py --iters 3000 --warmup 50
+
 # Part C comparison (controlled single-core)
 cd ../part_C
 sudo taskset -c 0 nice -n -20 env \
@@ -132,6 +136,10 @@ sudo taskset -c 0-5 nice -n -20 env OMP_NUM_THREADS=6 \
 | PyTorch baseline (FP32) | 1788.8 | 1700.5 | 3373.7 |
 | PyTorch ternary (TernaryConv2d) | 3330.4 | 3083.6 | 7012.4 |
 | **C++ AVX2 ternary (OpenMP, 6 threads, best run)** | **2077.0** | **1788.4** | **3885.3** |
+| ORT FP32 baseline | 919.2 | 855.8 | 1633.4 |
+| ORT FP32 ternary (frozen wts) | 857.9 | 807.6 | 1515.7 |
+
+ORT ternary uses `do_constant_folding=True` during export, so ternary quantization arithmetic is absorbed into Conv weight constants. ONNX Runtime executes standard FP32 convolutions and has no runtime awareness of ternary structure.
 
 ### Speedup
 
@@ -140,6 +148,9 @@ The C++ kernel is now **faster than PyTorch ternary** and **within 5% of PyTorch
 - C++ OpenMP vs C++ single-core: **2.43x** (mean), **2.43x** (median)
 - C++ OpenMP vs PyTorch ternary: **1.60x** (mean), **1.72x** (median)
 - C++ OpenMP vs PyTorch baseline: **0.86x** (mean), **0.95x** (median)
+- ORT baseline vs PyTorch baseline: **1.95x** (mean), **1.99x** (median)
+- ORT ternary vs PyTorch ternary: **3.88x** (mean), **3.82x** (median)
+- ORT ternary vs C++ AVX2 ternary (OpenMP, 6 threads): **2.42x** (mean), **2.21x** (median)
 
 ### Memory / Model Size
 
@@ -148,9 +159,15 @@ The C++ kernel is now **faster than PyTorch ternary** and **within 5% of PyTorch
 | `baseline.pth` (FP32 weights) | 1111.9 KB |
 | `ternary.pth` (FP32 storage, ternary values) | 1111.3 KB |
 | `model.bin` (packed ternary, 2 bits/weight) | 280.1 KB |
+| `baseline_fp32.onnx` | 84.3 KB |
+| `ternary_fp32.onnx` | 237.6 KB |
 | `python` peak RSS during benchmark | 3900.0 MB |
 
 `model.bin` is **4× smaller** than `ternary.pth` — the ternary packing (dual bitmaps + folded BN) compresses conv weights from 32 bits/weight to 2 bits/weight.
+
+ONNX export also improves artifact size vs `.pth` checkpoints:
+- `baseline_fp32.onnx` is **13.19x smaller** than `baseline.pth` (**92.4% smaller**).
+- `ternary_fp32.onnx` is **4.68x smaller** than `ternary.pth` (**78.6% smaller**).
 
 ### Why C++ is still slower than purely FP32 PyTorch
 
@@ -195,6 +212,7 @@ The **memory story is strong**: 4× smaller model file with the same accuracy, z
 python3 -m venv .venv
 source .venv/bin/activate
 pip install torch torchvision numpy
+pip install onnx onnxscript "onnxruntime>=1.19,<1.25"
 ```
 
 C++ build requires CMake 3.16+ and a GCC/Clang with AVX2 support.

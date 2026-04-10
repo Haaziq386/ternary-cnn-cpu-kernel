@@ -21,6 +21,7 @@ env/
 part_A/data/
 part_A/*.pth
 part_A/*.npz
+part_C/onnx_models/
 
 .codex
 

@@ -37,6 +37,7 @@ namespace ternary
             for (int n = 0; n < batch; ++n)
             {
                 const float *input_base = input.ptr() + static_cast<std::size_t>(n) * channels * input_h * input_w;
+#pragma omp parallel for collapse(2) schedule(static)
                 for (int oy = 0; oy < out_h; ++oy)
                 {
                     for (int ox = 0; ox < out_w; ++ox)
@@ -93,24 +94,28 @@ namespace ternary
             const float *sample_cols = col_base + static_cast<std::size_t>(n) * output_spatial * k_pad;
             float *sample_out = out_base + static_cast<std::size_t>(n) * weights.out_channels * output_spatial;
             // (M, N) cache blocking for FP32 convolution
-            for (int spatial_base = 0; spatial_base < output_spatial; spatial_base += kSpatialTile)
+#pragma omp parallel
             {
-                const int spatial_end = std::min(spatial_base + kSpatialTile, output_spatial);
-                for (int oc_base = 0; oc_base < weights.out_channels; oc_base += kChannelTile)
+                for (int spatial_base = 0; spatial_base < output_spatial; spatial_base += kSpatialTile)
                 {
-                    const int oc_end = std::min(oc_base + kChannelTile, weights.out_channels);
-                    for (int spatial = spatial_base; spatial < spatial_end; ++spatial)
+                    const int spatial_end = std::min(spatial_base + kSpatialTile, output_spatial);
+#pragma omp for schedule(static)
+                    for (int oc_base = 0; oc_base < weights.out_channels; oc_base += kChannelTile)
                     {
-                        const float *activation_row = sample_cols + static_cast<std::size_t>(spatial) * k_pad;
-                        for (int oc = oc_base; oc < oc_end; ++oc)
+                        const int oc_end = std::min(oc_base + kChannelTile, weights.out_channels);
+                        for (int spatial = spatial_base; spatial < spatial_end; ++spatial)
                         {
-                            const float *weight_row = weights.weight.data() + static_cast<std::size_t>(oc) * kernel_elements;
-                            float value = dot_product_fp32_avx2(weight_row, activation_row, kernel_elements);
-                            if (weights.has_bias)
+                            const float *activation_row = sample_cols + static_cast<std::size_t>(spatial) * k_pad;
+                            for (int oc = oc_base; oc < oc_end; ++oc)
                             {
-                                value += weights.bias[oc];
+                                const float *weight_row = weights.weight.data() + static_cast<std::size_t>(oc) * kernel_elements;
+                                float value = dot_product_fp32_avx2(weight_row, activation_row, kernel_elements);
+                                if (weights.has_bias)
+                                {
+                                    value += weights.bias[oc];
+                                }
+                                sample_out[static_cast<std::size_t>(oc) * output_spatial + spatial] = value;
                             }
-                            sample_out[static_cast<std::size_t>(oc) * output_spatial + spatial] = value;
                         }
                     }
                 }

@@ -139,6 +139,23 @@ sudo taskset -c 0-5 nice -n -20 env OMP_NUM_THREADS=6 \
 | 3 | 4259.65 | 3995.04 | 7028.06 |
 | 4 | 4474.71 | 4150.84 | 7515.81 |
 
+## K) Aggressive OpenMP in im2col and conv_fp32 (6-thread controlled runs)
+
+Extended OpenMP to the previously bottlenecked serial layers: `im2col` (using `collapse(2)`) and `conv_fp32` (over output channels).
+Also tested pointwise layers (add, relu) but removed OpenMP pragmas there because of minor regressions.
+
+Command:
+
+```bash
+sudo taskset -c 0-5 nice -n -20 env OMP_NUM_THREADS=6 ./build/ternary_infer model.bin --bench --iters 3000 --warmup 50
+```
+
+| Run | mean (us) | median (us) | p99 (us) |
+|---|---:|---:|---:|
+| 1 | 2946.60 | 2676.01 | 5654.11 |
+| 2 | 2738.21 | 2549.47 | 4488.70 |
+| 3 | 2862.03 | 2545.02 | 5254.98 |
+
 ---
 
 ## Summary for Reporting
@@ -151,10 +168,10 @@ sudo taskset -c 0-5 nice -n -20 env OMP_NUM_THREADS=6 \
 
 ### Best controlled OpenMP run (6 threads)
 
-- mean: **4259.65 us**
-- median: **3995.04 us**
-- p99: **7028.06 us**
-- vs current single-core reference (5106.85 us median): **21.78% lower median latency**
+- mean: **2738.21 us**
+- median: **2549.47 us**
+- p99: **4488.70 us**
+- vs current single-core reference (5106.85 us median): **50.08% lower median latency**
 
 ### Improvement Chain (no opt → compiler flags → M,N blocking → im2col fast path)
 
@@ -177,7 +194,7 @@ Command used:
 ```bash
 OMP_NUM_THREADS=6 MKL_NUM_THREADS=6 OPENBLAS_NUM_THREADS=6 \
   "$(which python)" part_C/benchmark_pytorch.py \
-  --cpp-mean-us 4259.65 --cpp-median-us 3995.04 --cpp-p99-us 7028.06 \
+  --cpp-mean-us 2738.21 --cpp-median-us 2549.47 --cpp-p99-us 4488.70 \
   --iters 3000 --warmup 50
 ```
 
@@ -185,21 +202,21 @@ Latency results:
 
 | Implementation | mean (us) | median (us) | p99 (us) |
 |---|---:|---:|---:|
-| PyTorch baseline (FP32) | 1596.9 | 1480.2 | 3711.5 |
-| PyTorch ternary | 2838.4 | 2589.6 | 5699.9 |
-| C++ ternary (OpenMP, 6 threads) | 4259.65 | 3995.04 | 7028.06 |
+| PyTorch baseline (FP32) | 1788.8 | 1700.5 | 3373.7 |
+| PyTorch ternary | 3330.4 | 3083.6 | 7012.4 |
+| C++ ternary (OpenMP, 6 threads) | 2738.21 | 2549.47 | 4488.70 |
 
 Speedups (C++ vs PyTorch):
 
-- vs PyTorch ternary: 0.67x (mean), 0.65x (median)
-- vs PyTorch baseline: 0.37x (mean), 0.37x (median)
+- vs PyTorch ternary: 1.22x (mean), 1.21x (median)
+- vs PyTorch baseline: 0.65x (mean), 0.67x (median)
 
 Memory outputs from `part_C/results.json`:
 
 - baseline.pth: 1111.9 KB
 - ternary.pth: 1111.3 KB
 - model.bin: 280.1 KB
-- Python peak RSS during benchmark: 3649.1 MB
+- Python peak RSS during benchmark: 3900.0 MB
 
 Note: C++ inference peak RSS can be measured with:
 
@@ -234,3 +251,25 @@ sudo taskset -c 0-5 nice -n -20 env \
 OMP_NUM_THREADS=6 MKL_NUM_THREADS=6 OPENBLAS_NUM_THREADS=6 \
   "$(which python)" part_C/benchmark_pytorch.py --cpp-mean-us <mean> --cpp-median-us <median> --cpp-p99-us <p99> --iters 3000 --warmup 50
 ```
+
+## Latest Cross-Framework Comparison (Aggressive OpenMP run)
+
+Source: `part_C/results.json` generated from the latest command below.
+
+Command used:
+
+```bash
+OMP_NUM_THREADS=6 MKL_NUM_THREADS=6 OPENBLAS_NUM_THREADS=6 \
+  "$(which python)" part_C/benchmark_pytorch.py \
+  --cpp-mean-us 2738.21 --cpp-median-us 2549.47 --cpp-p99-us 4488.70 \
+  --iters 3000 --warmup 50
+```
+
+Latency results:
+
+| Implementation | mean (us) | median (us) | p99 (us) |
+|---|---:|---:|---:|
+| PyTorch baseline (FP32) | 1788.8 | 1700.5 | 3373.7 |
+| PyTorch ternary | 3330.4 | 3083.6 | 7012.4 |
+| C++ ternary (OpenMP, 6 threads) | 2738.21 | 2549.47 | 4488.70 |
+

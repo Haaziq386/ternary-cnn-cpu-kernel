@@ -129,17 +129,17 @@ sudo taskset -c 0-5 nice -n -20 env OMP_NUM_THREADS=6 \
 
 | Implementation | mean (us) | median (us) | p99 (us) |
 |---|---|---|---|
-| PyTorch baseline (FP32) | 1596.9 | 1480.2 | 3711.5 |
-| PyTorch ternary (TernaryConv2d) | 2838.4 | 2589.6 | 5699.9 |
-| **C++ AVX2 ternary (OpenMP, 6 threads, best run)** | **4259.7** | **3995.0** | **7028.1** |
+| PyTorch baseline (FP32) | 1788.8 | 1700.5 | 3373.7 |
+| PyTorch ternary (TernaryConv2d) | 3330.4 | 3083.6 | 7012.4 |
+| **C++ AVX2 ternary (OpenMP, 6 threads, best run)** | **2738.2** | **2549.5** | **4488.7** |
 
 ### Speedup
 
-The C++ kernel is still **slower** than PyTorch in this controlled setup, but OpenMP improved C++ latency vs its single-core reference.
+The C++ kernel is now **faster than PyTorch ternary** in this controlled setup, while still slower than the PyTorch FP32 baseline.
 
-- C++ OpenMP vs C++ single-core: **1.21x** (mean), **1.28x** (median)
-- C++ OpenMP vs PyTorch ternary: **0.67x** (mean), **0.65x** (median)
-- C++ OpenMP vs PyTorch baseline: **0.37x** (mean), **0.37x** (median)
+- C++ OpenMP vs C++ single-core: **1.84x** (mean), **1.85x** (median)
+- C++ OpenMP vs PyTorch ternary: **1.22x** (mean), **1.21x** (median)
+- C++ OpenMP vs PyTorch baseline: **0.65x** (mean), **0.67x** (median)
 
 ### Memory / Model Size
 
@@ -148,18 +148,18 @@ The C++ kernel is still **slower** than PyTorch in this controlled setup, but Op
 | `baseline.pth` (FP32 weights) | 1111.9 KB |
 | `ternary.pth` (FP32 storage, ternary values) | 1111.3 KB |
 | `model.bin` (packed ternary, 2 bits/weight) | 280.1 KB |
-| `python` peak RSS during benchmark | 3087.3 MB |
+| `python` peak RSS during benchmark | 3900.0 MB |
 
 `model.bin` is **4× smaller** than `ternary.pth` — the ternary packing (dual bitmaps + folded BN) compresses conv weights from 32 bits/weight to 2 bits/weight.
 
-### Why C++ is slower here
+### Why C++ is still slower than purely FP32 PyTorch
 
 PyTorch dispatches `conv2d` on CPU to **oneDNN** (Intel's Deep Neural Network Library), which is a production-grade BLAS with:
 - Multi-threaded execution across CPU cores and automatic work distribution
 - Decades of cache-blocking optimisation (Goto GEMM)
 - Hardware-specific codepaths tuned per microarchitecture
 
-The C++ kernel here uses basic (M,N) cache blocking plus OpenMP parallelism in `conv_ternary` (output-channel tiles). The table above reports the **single-core** reference path for a strict apples-to-apples baseline.
+The C++ kernel here uses basic (M,N) cache blocking plus aggressive OpenMP parallelism across `conv_ternary`, `im2col`, and `conv_fp32`. The table above reports the **single-core** reference path for a strict apples-to-apples baseline.
 
 Single-core structure:
 - Spatial tile (M): 64 elements
@@ -168,7 +168,7 @@ Single-core structure:
 
 The kernel also applies an im2col fast path: no blanket full-buffer zero-fill, zeros are written only for out-of-bounds elements and k-padding tail. Combined with (M,N) blocking, this delivered **19.77% median improvement** vs baseline. Full run history (single-core and OpenMP) is in [RESULTS.md](RESULTS.md).
 
-Further gains would require: broader OpenMP parallelism beyond `conv_ternary`, deeper K-dimension blocking for activation reuse, and INT8 quantisation to use AVX-VNNI `vpdpbusd` (4× throughput).
+Further gains would require deeper K-dimension blocking for activation reuse, and INT8 quantisation to use AVX-VNNI `vpdpbusd` (4× throughput).
 
 The **memory story is strong**: 4× smaller model file with the same accuracy, zero floating-point multiplies in the hot path, and reduced memory bandwidth — the structural efficiency of ternary is real even if single-threaded latency doesn't match production libraries.
 

@@ -390,3 +390,55 @@ Speedups:
 - vs PyTorch ternary: **1.60x** (mean), **1.72x** (median)
 - vs PyTorch baseline: **0.86x** (mean), **0.95x** (median)
 
+## S) thread scaling + ORT multi-thread
+
+Goal: refresh numbers with consistent high-priority runs and verify scaling beyond 6 threads on i7-12650H.
+
+### C++ ternary (`part_B/build/ternary_infer`)
+
+Controlled 6-thread runs:
+
+```bash
+sudo taskset -c 0-5 nice -n -20 env OMP_NUM_THREADS=6 \
+  ./build/ternary_infer model.bin --bench --iters 3000 --warmup 50
+```
+
+| Run | mean (us) | median (us) | p99 (us) |
+|---|---:|---:|---:|
+| 1 | 1792.98 | 1814.51 | 2579.07 |
+| 2 | 1809.98 | 1848.31 | 2635.37 |
+| 3 | 1858.46 | 1872.62 | 2763.98 |
+
+8-thread exploratory run:
+
+```bash
+sudo taskset -c 0-7 nice -n -10 env OMP_NUM_THREADS=8 \
+  ./build/ternary_infer model.bin --bench --iters 3000 --warmup 50
+```
+
+| mean (us) | median (us) | p99 (us) |
+|---:|---:|---:|
+| 1666.97 | 1652.95 | 2172.33 |
+
+Observation: 8 threads improved latency vs the controlled 6-thread setup on this host.
+
+### ONNX Runtime (`part_C/benchmark_onnx.py`)
+
+6-thread ORT run:
+
+```bash
+sudo nice -n -20 "$(which python)" benchmark_onnx.py --iters 3000 --warmup 50 --threads 6
+```
+
+| Implementation | mean (us) | median (us) | p99 (us) |
+|---|---:|---:|---:|
+| ORT FP32 baseline | 329.8 | 321.6 | 607.5 |
+| ORT FP32 ternary (frozen weights) | 328.6 | 322.9 | 560.7 |
+
+16-thread ORT was tested but showed larger p99 variance; 6-thread values are used as the stable reference.
+
+### Command correctness notes
+
+1. In `part_C`, use `"$(which python)"` with `sudo` to avoid `python: No such file or directory`.
+2. `./build/ternary_infer` only exists in `part_B`, so run that command from `part_B`.
+

@@ -132,13 +132,13 @@ namespace ternary
                im2col_buffer);
 
         const int output_spatial = weights.output_h * weights.output_w;
-        const int packed_bytes   = weights.k_pad / 8;
-        const float *col_base    = im2col_buffer.data();
-        float *out_base          = output.ptr();
+        const int packed_bytes = weights.k_pad / 8;
+        const float *col_base = im2col_buffer.data();
+        float *out_base = output.ptr();
 
         // Number of 4-wide output channel groups and remainder
-        const int oc4_count    = weights.out_channels / 4;
-        const int oc4_rem      = weights.out_channels % 4;
+        const int oc4_count = weights.out_channels / 4;
+        const int oc4_rem = weights.out_channels % 4;
         const int spatial_tiles = (output_spatial + kSpatialTile - 1) / kSpatialTile;
 
 #pragma omp parallel
@@ -146,7 +146,7 @@ namespace ternary
             for (int n = 0; n < input.n; ++n)
             {
                 const float *sample_cols = col_base + static_cast<std::size_t>(n) * output_spatial * weights.k_pad;
-                float *sample_out        = out_base + static_cast<std::size_t>(n) * weights.out_channels * output_spatial;
+                float *sample_out = out_base + static_cast<std::size_t>(n) * weights.out_channels * output_spatial;
 
                 // collapse(2): distribute (oc_group × spatial_tile) work items across threads.
                 // Each item processes 4 output channels for one spatial tile — 1 activation load
@@ -159,7 +159,7 @@ namespace ternary
                     {
                         const int oc_base = oc_grp * 4;
                         const int sp_base = stile * kSpatialTile;
-                        const int sp_end  = std::min(sp_base + kSpatialTile, output_spatial);
+                        const int sp_end = std::min(sp_base + kSpatialTile, output_spatial);
 
                         const std::uint8_t *pos0 = weights.pos_bits.data() + static_cast<std::size_t>(oc_base + 0) * packed_bytes;
                         const std::uint8_t *neg0 = weights.neg_bits.data() + static_cast<std::size_t>(oc_base + 0) * packed_bytes;
@@ -180,8 +180,42 @@ namespace ternary
                         float *out2 = sample_out + static_cast<std::size_t>(oc_base + 2) * output_spatial;
                         float *out3 = sample_out + static_cast<std::size_t>(oc_base + 3) * output_spatial;
 
-                        for (int spatial = sp_base; spatial < sp_end; ++spatial)
+                        for (int spatial = sp_base; spatial + 1 < sp_end; spatial += 2)
                         {
+                            const float *act0 = sample_cols + static_cast<std::size_t>(spatial) * weights.k_pad;
+                            const float *act1 = sample_cols + static_cast<std::size_t>(spatial + 1) * weights.k_pad;
+                            float res0[4];
+                            float res1[4];
+                            dot_product_ternary_2x4_avx2(act0, act1, pos0, neg0, pos1, neg1, pos2, neg2, pos3, neg3, packed_bytes, res0, res1);
+                            if (fuse_relu)
+                            {
+                                out0[spatial] = std::max(0.0f, res0[0] * s0 + b0);
+                                out1[spatial] = std::max(0.0f, res0[1] * s1 + b1);
+                                out2[spatial] = std::max(0.0f, res0[2] * s2 + b2);
+                                out3[spatial] = std::max(0.0f, res0[3] * s3 + b3);
+
+                                out0[spatial + 1] = std::max(0.0f, res1[0] * s0 + b0);
+                                out1[spatial + 1] = std::max(0.0f, res1[1] * s1 + b1);
+                                out2[spatial + 1] = std::max(0.0f, res1[2] * s2 + b2);
+                                out3[spatial + 1] = std::max(0.0f, res1[3] * s3 + b3);
+                            }
+                            else
+                            {
+                                out0[spatial] = res0[0] * s0 + b0;
+                                out1[spatial] = res0[1] * s1 + b1;
+                                out2[spatial] = res0[2] * s2 + b2;
+                                out3[spatial] = res0[3] * s3 + b3;
+
+                                out0[spatial + 1] = res1[0] * s0 + b0;
+                                out1[spatial + 1] = res1[1] * s1 + b1;
+                                out2[spatial + 1] = res1[2] * s2 + b2;
+                                out3[spatial + 1] = res1[3] * s3 + b3;
+                            }
+                        }
+                        // Handle odd spatial element if it exists
+                        if ((sp_end - sp_base) % 2 != 0)
+                        {
+                            int spatial = sp_end - 1;
                             const float *act = sample_cols + static_cast<std::size_t>(spatial) * weights.k_pad;
                             float res[4];
                             dot_product_ternary_4x_avx2(act, pos0, neg0, pos1, neg1, pos2, neg2, pos3, neg3, packed_bytes, res);

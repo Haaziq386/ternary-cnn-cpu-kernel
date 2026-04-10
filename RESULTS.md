@@ -216,6 +216,71 @@ persistent region cost more than was saved by avoiding 18 fork/join cycles.
 
 Reverted to separate parallel regions.
 
+## Q) Hardware counter probe with perf
+
+Goal: check whether more threads were still buying useful speedup before adding more algorithmic complexity.
+
+### Setup
+
+```bash
+sudo apt-get update && sudo apt-get install -y linux-tools-common linux-tools-generic
+```
+
+### perf attempt
+
+```bash
+/usr/lib/linux-tools-6.8.0-107/perf stat -d taskset -c 0-5 env OMP_NUM_THREADS=6 \
+  ./build/ternary_infer model.bin --bench --iters 3000 --warmup 50
+```
+
+Observed output from this run:
+
+```text
+mean_us=1780.31 median_us=1831.20 p99_us=2594.66
+task-clock:u = 33480.85 msec (6.144 CPUs utilized)
+page-faults:u = 589
+time elapsed = 5.448967364 s
+user = 33.419834 s, sys = 0.049195 s
+```
+
+PMU limitation reported by `perf`:
+
+```text
+Unable to find PMU or event on a PMU of 'cpu_core'
+<not supported> cycles:u
+<not supported> instructions:u
+<not supported> branches:u
+<not supported> branch-misses:u
+<not supported> L1-dcache-loads:u
+<not supported> L1-dcache-load-misses:u
+<not supported> LLC-loads:u
+<not supported> LLC-load-misses:u
+```
+
+### Thread-scaling probe
+
+```bash
+for t in 1 2 4 6; do OMP_NUM_THREADS=$t ./build/ternary_infer model.bin --bench --iters 3000 --warmup 50; done
+```
+
+| Threads | mean (us) | median (us) | p99 (us) |
+|---|---:|---:|---:|
+| 1 | 4584.42 | 4546.26 | 6182.36 |
+| 2 | 2706.97 | 2614.49 | 4320.41 |
+| 4 | 1987.34 | 1835.72 | 3271.63 |
+| 6 | 1927.56 | 1944.42 | 2786.96 |
+
+### Resource usage
+
+| Threads | wall time | CPU% | max RSS (KB) |
+|---|---:|---:|---:|
+| 1 | 15.57 s | 95% | 5264 |
+| 6 | 5.65 s | 620% | 4984 |
+
+### Conclusion
+
+The code still scales well from 1 to 4 threads, but gains flatten by 6 threads. That suggests the hot path is no longer compute-only; memory traffic and/or OpenMP overhead are starting to dominate. Due to a WSL architectural constraint (Microsoft WSL2 kernel PMU exposure), `perf` cannot provide IPC, cache-miss, or bandwidth counters here, so deeper hardware-counter bottleneck analysis is not possible on this host.
+
 ---
 
 ## Summary for Reporting

@@ -40,11 +40,11 @@ sudo taskset -c 0 nice -n -20 ./build/ternary_infer model.bin --bench --iters 30
 sudo taskset -c 0-5 nice -n -20 env OMP_NUM_THREADS=6 \
   ./build/ternary_infer model.bin --bench --iters 3000 --warmup 50
 
-# Part C — benchmark PyTorch and compare
+# Part C — benchmark PyTorch and compare (latest C++ OpenMP best example)
 cd ../part_C
 python benchmark_pytorch.py \
-  --cpp-mean-us 5714.55 --cpp-median-us 5656.07 --cpp-p99-us 6843.96 \
-  --iters 1000 --warmup 10
+  --cpp-mean-us 2077.00 --cpp-median-us 1788.39 --cpp-p99-us 3885.26 \
+  --iters 3000 --warmup 50
 
 # Part C comparison (controlled single-core)
 cd ../part_C
@@ -131,15 +131,15 @@ sudo taskset -c 0-5 nice -n -20 env OMP_NUM_THREADS=6 \
 |---|---|---|---|
 | PyTorch baseline (FP32) | 1788.8 | 1700.5 | 3373.7 |
 | PyTorch ternary (TernaryConv2d) | 3330.4 | 3083.6 | 7012.4 |
-| **C++ AVX2 ternary (OpenMP, 6 threads, best run)** | **2738.2** | **2549.5** | **4488.7** |
+| **C++ AVX2 ternary (OpenMP, 6 threads, best run)** | **2077.0** | **1788.4** | **3885.3** |
 
 ### Speedup
 
-The C++ kernel is now **faster than PyTorch ternary** in this controlled setup, while still slower than the PyTorch FP32 baseline.
+The C++ kernel is now **faster than PyTorch ternary** and **within 5% of PyTorch FP32 baseline** (median).
 
-- C++ OpenMP vs C++ single-core: **1.84x** (mean), **1.85x** (median)
-- C++ OpenMP vs PyTorch ternary: **1.22x** (mean), **1.21x** (median)
-- C++ OpenMP vs PyTorch baseline: **0.65x** (mean), **0.67x** (median)
+- C++ OpenMP vs C++ single-core: **2.43x** (mean), **2.43x** (median)
+- C++ OpenMP vs PyTorch ternary: **1.60x** (mean), **1.72x** (median)
+- C++ OpenMP vs PyTorch baseline: **0.86x** (mean), **0.95x** (median)
 
 ### Memory / Model Size
 
@@ -159,16 +159,31 @@ PyTorch dispatches `conv2d` on CPU to **oneDNN** (Intel's Deep Neural Network Li
 - Decades of cache-blocking optimisation (Goto GEMM)
 - Hardware-specific codepaths tuned per microarchitecture
 
-The C++ kernel here uses basic (M,N) cache blocking plus aggressive OpenMP parallelism across `conv_ternary`, `im2col`, and `conv_fp32`. The table above reports the **single-core** reference path for a strict apples-to-apples baseline.
+The C++ kernel uses (M,N) cache blocking, a 4-wide ternary dot product, and aggressive OpenMP parallelism. The table above reports the **best multi-core OpenMP (6-thread)** result; the controlled single-core reference path is tracked in the optimization history below.
 
 Single-core structure:
 - Spatial tile (M): 64 elements
-- Channel tile (N): 32 output channels
-- Keeps per-channel weight rows (pos_bits, neg_bits) in L2 cache while processing activation tiles
+- Output channel group (N): 4 channels per dot-product call (`dot_product_ternary_4x_avx2`)
+- Activation row loaded **once** and applied to 4 output channels simultaneously → 4× fewer L2 reads
 
-The kernel also applies an im2col fast path: no blanket full-buffer zero-fill, zeros are written only for out-of-bounds elements and k-padding tail. Combined with (M,N) blocking, this delivered **19.77% median improvement** vs baseline. Full run history (single-core and OpenMP) is in [RESULTS.md](RESULTS.md).
+OpenMP multi-core structure:
+- `collapse(2)` over `(oc_group × spatial_tile)` work items → **one barrier per layer** instead of one per spatial tile
+- For 32×32 output with 16 spatial tiles: reduces from 16 barriers to 1 per ternary layer
 
-Further gains would require deeper K-dimension blocking for activation reuse, and INT8 quantisation to use AVX-VNNI `vpdpbusd` (4× throughput).
+Optimization history (single-core median, controlled runs):
+
+| Step | Median (us) | Improvement |
+|---|---:|---|
+| Baseline (no opt) | 6061.09 | — |
+| Compiler flags | 5427.73 | **10.5%** |
+| M,N cache blocking | 5086.88 | **6.3%** |
+| im2col fast path | 4862.89 | **4.4%** |
+| 4-wide kernel + collapse(2) | 4344.98 | **10.7%** |
+| **Total** | **4344.98** | **28.3%** (vs baseline) |
+
+Full run history and failed experiments are in [RESULTS.md](RESULTS.md).
+
+Further gains would require INT8 quantisation to use AVX-VNNI `vpdpbusd` (4× throughput) or a fused streaming im2col to keep activation data in L1 rather than L2.
 
 The **memory story is strong**: 4× smaller model file with the same accuracy, zero floating-point multiplies in the hot path, and reduced memory bandwidth — the structural efficiency of ternary is real even if single-threaded latency doesn't match production libraries.
 

@@ -136,6 +136,42 @@ namespace ternary
         return sum;
     }
 
+    // 4-wide ternary dot product: load activation once, compute 4 output channels.
+    // Uses: acc += (x & pos_mask) + ((-x) & neg_mask)
+    // where -x = x XOR sign_bit, valid since ternary ensures pos and neg can't both be set.
+    void dot_product_ternary_4x_avx2(const float *activation,
+                                     const std::uint8_t *pos0, const std::uint8_t *neg0,
+                                     const std::uint8_t *pos1, const std::uint8_t *neg1,
+                                     const std::uint8_t *pos2, const std::uint8_t *neg2,
+                                     const std::uint8_t *pos3, const std::uint8_t *neg3,
+                                     int packed_bytes, float *results)
+    {
+        __m256 acc0 = _mm256_setzero_ps();
+        __m256 acc1 = _mm256_setzero_ps();
+        __m256 acc2 = _mm256_setzero_ps();
+        __m256 acc3 = _mm256_setzero_ps();
+        const __m256 sign_mask = _mm256_set1_ps(-0.0f); // 0x80000000 in each lane
+
+        int i = 0;
+#if defined(__GNUC__)
+#pragma GCC unroll 4
+#endif
+        for (; i < packed_bytes; ++i)
+        {
+            const __m256 x  = _mm256_loadu_ps(activation + i * 8);
+            const __m256 nx = _mm256_xor_ps(x, sign_mask); // negate x
+            acc0 = _mm256_add_ps(acc0, _mm256_add_ps(_mm256_and_ps(x, mask_to_ps(pos0[i])), _mm256_and_ps(nx, mask_to_ps(neg0[i]))));
+            acc1 = _mm256_add_ps(acc1, _mm256_add_ps(_mm256_and_ps(x, mask_to_ps(pos1[i])), _mm256_and_ps(nx, mask_to_ps(neg1[i]))));
+            acc2 = _mm256_add_ps(acc2, _mm256_add_ps(_mm256_and_ps(x, mask_to_ps(pos2[i])), _mm256_and_ps(nx, mask_to_ps(neg2[i]))));
+            acc3 = _mm256_add_ps(acc3, _mm256_add_ps(_mm256_and_ps(x, mask_to_ps(pos3[i])), _mm256_and_ps(nx, mask_to_ps(neg3[i]))));
+        }
+
+        results[0] = horizontal_sum(acc0);
+        results[1] = horizontal_sum(acc1);
+        results[2] = horizontal_sum(acc2);
+        results[3] = horizontal_sum(acc3);
+    }
+
 } // namespace ternary
 
 /*

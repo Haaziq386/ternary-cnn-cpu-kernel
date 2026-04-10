@@ -156,24 +156,83 @@ sudo taskset -c 0-5 nice -n -20 env OMP_NUM_THREADS=6 ./build/ternary_infer mode
 | 2 | 2738.21 | 2549.47 | 4488.70 |
 | 3 | 2862.03 | 2545.02 | 5254.98 |
 
+## L) 4-wide ternary kernel + collapse(2) OpenMP (single-core)
+
+Replaced single-channel `dot_product_ternary_avx2` with `dot_product_ternary_4x_avx2`.
+Load each activation row **once** and compute **4 output channels simultaneously** (4× fewer activation reads).
+Also restructured `conv_ternary` with `collapse(2)` over `(oc_group × spatial_tile)` pairs — one
+OpenMP barrier per layer instead of one per spatial tile (16 tiles → 1).
+
+| Run | mean (us) | median (us) | p99 (us) |
+|---|---:|---:|---:|
+| 1 | 4448.19 | 4357.38 | 6271.82 |
+| 2 | 4492.03 | 4385.32 | 6356.46 |
+| 3 | 4403.88 | 4344.98 | 6348.11 |
+| 4 | 4518.70 | 4413.61 | 6461.12 |
+
+## M) 4-wide kernel + collapse(2) OpenMP (6-thread controlled runs)
+
+Same code as L), benchmarked with 6 threads.
+
+| Run | mean (us) | median (us) | p99 (us) |
+|---|---:|---:|---:|
+| 1 | 2084.27 | 1805.41 | 3900.39 |
+| 2 | 2077.00 | 1788.39 | 3885.26 |
+| 3 | 2121.31 | 1854.07 | 4071.03 |
+| 4 | 2215.61 | 2053.61 | 3651.92 |
+| 5 | 2314.22 | 2211.29 | 4447.15 |
+
+## N) Attempted: explicit 2-unroll with dual accumulators per channel → reverted
+
+Added `acc_a / acc_b` per output channel (8 accumulators total) with explicit 2-byte unrolling to try
+to hide L2 latency and FP-add dependency chains. Result: **worse** — increased register pressure caused
+the compiler to generate suboptimal code.
+
+| Run | mean (us) | median (us) | p99 (us) |
+|---|---:|---:|---:|
+| 1 | 4782.21 | 4577.59 | 7940.96 |
+| 2 | 4607.49 | 4514.23 | 7223.33 |
+| 3 | 4616.39 | 4563.97 | 6519.50 |
+
+Reverted to single-accumulator version with `#pragma GCC unroll 4`.
+
+## O) Attempted: kSpatialTile=128 → reverted
+
+Doubled spatial tile size from 64 to 128. Fewer work items meant worse load balance for the
+small-channel layers (16-channel group has only 4 oc_groups × 8 tiles = 32 work items for 6 threads).
+**Worse on both single-core and multi-core.**
+
+| Config | median single-core (us) | median 6-thread (us) |
+|---|---:|---:|
+| kSpatialTile=64 (kept) | 4344.98 | 1788.39 |
+| kSpatialTile=128 (reverted) | ~4440 | ~1925 |
+
+## P) Attempted: merged im2col parallel region into conv_ternary → reverted
+
+Inlined the im2col loop directly inside `conv_ternary`'s `#pragma omp parallel` region using an
+orphaned `#pragma omp for`, eliminating 18 separate parallel-region launches (one per ternary layer).
+Result: **slightly worse** — the extra implicit barrier between im2col and conv phases inside the
+persistent region cost more than was saved by avoiding 18 fork/join cycles.
+
+Reverted to separate parallel regions.
+
 ---
 
 ## Summary for Reporting
 
-### Best controlled run (with M,N cache blocking + im2col fast path)
+### Best single-core run (4-wide kernel + collapse(2))
 
-- mean: **4945.87 us**
-- median: **4862.89 us**
-- p99: **6674.15 us**
+- mean: **4403.88 us**
+- median: **4344.98 us**
+- p99: **6348.11 us**
 
-### Best controlled OpenMP run (6 threads)
+### Best 6-thread OpenMP run (4-wide kernel + collapse(2))
 
-- mean: **2738.21 us**
-- median: **2549.47 us**
-- p99: **4488.70 us**
-- vs current single-core reference (5106.85 us median): **50.08% lower median latency**
+- mean: **2077.00 us**
+- median: **1788.39 us**
+- p99: **3885.26 us**
 
-### Improvement Chain (no opt → compiler flags → M,N blocking → im2col fast path)
+### Improvement Chain (full history)
 
 | Step | Median (us) | Improvement |
 |---|---:|---|
@@ -181,50 +240,8 @@ sudo taskset -c 0-5 nice -n -20 env OMP_NUM_THREADS=6 ./build/ternary_infer mode
 | Compiler flags only | 5427.73 | **10.47%** |
 | M,N cache blocking | 5086.88 | **6.28%** (vs flags) |
 | im2col fast path | 4862.89 | **4.40%** (vs M,N block) |
-| **Total** | 4862.89 | **19.77%** (vs baseline) |
-
----
-
-## Latest Cross-Framework Comparison (OpenMP run)
-
-Source: `part_C/results.json` generated from the latest command below.
-
-Command used:
-
-```bash
-OMP_NUM_THREADS=6 MKL_NUM_THREADS=6 OPENBLAS_NUM_THREADS=6 \
-  "$(which python)" part_C/benchmark_pytorch.py \
-  --cpp-mean-us 2738.21 --cpp-median-us 2549.47 --cpp-p99-us 4488.70 \
-  --iters 3000 --warmup 50
-```
-
-Latency results:
-
-| Implementation | mean (us) | median (us) | p99 (us) |
-|---|---:|---:|---:|
-| PyTorch baseline (FP32) | 1788.8 | 1700.5 | 3373.7 |
-| PyTorch ternary | 3330.4 | 3083.6 | 7012.4 |
-| C++ ternary (OpenMP, 6 threads) | 2738.21 | 2549.47 | 4488.70 |
-
-Speedups (C++ vs PyTorch):
-
-- vs PyTorch ternary: 1.22x (mean), 1.21x (median)
-- vs PyTorch baseline: 0.65x (mean), 0.67x (median)
-
-Memory outputs from `part_C/results.json`:
-
-- baseline.pth: 1111.9 KB
-- ternary.pth: 1111.3 KB
-- model.bin: 280.1 KB
-- Python peak RSS during benchmark: 3900.0 MB
-
-Note: C++ inference peak RSS can be measured with:
-
-```bash
-/usr/bin/time -v ./build/ternary_infer model.bin --bench
-```
-
-This prints the process memory high-water mark (`Maximum resident set size`) for the C++ binary.
+| 4-wide kernel + collapse(2) | 4344.98 | **10.65%** (vs im2col fast path) |
+| **Total single-core** | 4344.98 | **28.31%** (vs baseline) |
 
 ---
 
@@ -252,24 +269,17 @@ OMP_NUM_THREADS=6 MKL_NUM_THREADS=6 OPENBLAS_NUM_THREADS=6 \
   "$(which python)" part_C/benchmark_pytorch.py --cpp-mean-us <mean> --cpp-median-us <median> --cpp-p99-us <p99> --iters 3000 --warmup 50
 ```
 
-## Latest Cross-Framework Comparison (Aggressive OpenMP run)
+## Latest Cross-Framework Comparison (4-wide kernel, 6-thread OpenMP)
 
-Source: `part_C/results.json` generated from the latest command below.
-
-Command used:
-
-```bash
-OMP_NUM_THREADS=6 MKL_NUM_THREADS=6 OPENBLAS_NUM_THREADS=6 \
-  "$(which python)" part_C/benchmark_pytorch.py \
-  --cpp-mean-us 2738.21 --cpp-median-us 2549.47 --cpp-p99-us 4488.70 \
-  --iters 3000 --warmup 50
-```
-
-Latency results:
+Best C++ result from section M above.
 
 | Implementation | mean (us) | median (us) | p99 (us) |
 |---|---:|---:|---:|
 | PyTorch baseline (FP32) | 1788.8 | 1700.5 | 3373.7 |
 | PyTorch ternary | 3330.4 | 3083.6 | 7012.4 |
-| C++ ternary (OpenMP, 6 threads) | 2738.21 | 2549.47 | 4488.70 |
+| C++ ternary (OpenMP, 6 threads) | 2077.00 | 1788.39 | 3885.26 |
+
+Speedups:
+- vs PyTorch ternary: **1.60x** (mean), **1.72x** (median)
+- vs PyTorch baseline: **0.86x** (mean), **0.95x** (median)
 

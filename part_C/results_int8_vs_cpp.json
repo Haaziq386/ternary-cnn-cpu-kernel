@@ -1,0 +1,84 @@
+{
+  "latency_us": {
+    "multi_core": {
+      "cpp_ternary": {
+        "mean_us": 2855.05,
+        "median_us": 2800.04,
+        "p99_us": 6129.51
+      },
+      "ort_baseline_dynamic_int8": {
+        "mean_us": 2217.95,
+        "median_us": 2083.35,
+        "p99_us": 3680.0,
+        "min_us": 1657.04,
+        "max_us": 7039.34
+      },
+      "ort_ternary_dynamic_int8": {
+        "mean_us": 1634.24,
+        "median_us": 1576.95,
+        "p99_us": 2844.85,
+        "min_us": 1251.65,
+        "max_us": 4753.99
+      }
+    },
+    "single_core": {
+      "cpp_ternary": {
+        "mean_us": 4559.11,
+        "median_us": 4268.36,
+        "p99_us": 8527.33
+      },
+      "ort_baseline_dynamic_int8": {
+        "mean_us": 3816.15,
+        "median_us": 3587.26,
+        "p99_us": 6418.56,
+        "min_us": 3027.26,
+        "max_us": 12620.94
+      },
+      "ort_ternary_dynamic_int8": {
+        "mean_us": 2334.02,
+        "median_us": 2104.92,
+        "p99_us": 4678.74,
+        "min_us": 1806.92,
+        "max_us": 7886.65
+      }
+    }
+  },
+  "speedup": {
+    "multi_core_ort_ternary_int8_vs_cpp_ternary": {
+      "mean_x": 0.57,
+      "median_x": 0.56,
+      "p99_x": 0.46
+    },
+    "single_core_ort_ternary_int8_vs_cpp_ternary": {
+      "mean_x": 0.51,
+      "median_x": 0.49,
+      "p99_x": 0.55
+    }
+  },
+  "model_sizes_kb": {
+    "model_bin_kb": 280.1,
+    "baseline_fp32_onnx_kb": 84.3,
+    "ternary_fp32_onnx_kb": 237.6,
+    "baseline_dynamic_int8_onnx_kb": 331.1,
+    "ternary_dynamic_int8_onnx_kb": 1202.8
+  },
+  "config": {
+    "iters": 3000,
+    "warmup": 50,
+    "multi_cores": "0-5",
+    "single_core": 0,
+    "threads": 6,
+    "quantization": "dynamic_int8",
+    "op_types_to_quantize": [
+      "Conv",
+      "MatMul",
+      "Gemm"
+    ],
+    "cpp_use_sudo": true,
+    "cpp_nice": -20
+  },
+  "raw_outputs": {
+    "cpp_multi": "mean_us=2855.05 median_us=2800.04 p99_us=6129.51\n",
+    "cpp_single": "mean_us=4559.11 median_us=4268.36 p99_us=8527.33\n"
+  }
+}

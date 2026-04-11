@@ -50,6 +50,16 @@ python benchmark_pytorch.py \
 python export_onnx.py --opset 18
 sudo nice -n -20 "$(which python)" benchmark_onnx.py --threads 6 --iters 3000 --warmup 50
 
+# Part C — compare C++ ternary vs ONNX dynamic INT8 (single + multi-core in one run)
+"$(which python)" benchmark_int8_vs_cpp.py \
+  --multi-cores 0-5 --single-core 0 --threads 6 \
+  --iters 3000 --warmup 50 --use-sudo --nice -20
+
+# If FP32 ONNX models already exist and you want to skip export:
+"$(which python)" benchmark_int8_vs_cpp.py \
+  --skip-export --multi-cores 0-5 --single-core 0 --threads 6 \
+  --iters 3000 --warmup 50 --use-sudo --nice -20
+
 # Part C comparison (controlled single-core)
 cd ../part_C
 sudo taskset -c 0 nice -n -20 env \

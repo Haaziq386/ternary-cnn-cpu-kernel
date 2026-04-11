@@ -16,6 +16,11 @@ add_executable(ternary_infer
 
 target_include_directories(ternary_infer PRIVATE include)
 
+option(PROFILE_LAYERS "Print per-layer timing breakdown" OFF)
+if(PROFILE_LAYERS)
+    target_compile_definitions(ternary_infer PRIVATE PROFILE_LAYERS)
+endif()
+
 find_package(OpenMP)
 if(OpenMP_CXX_FOUND)
     target_link_libraries(ternary_infer OpenMP::OpenMP_CXX)

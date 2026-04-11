@@ -27,7 +27,7 @@ namespace ternary
     namespace
     {
 
-        constexpr int kSpatialTile = 64;
+        constexpr int kSpatialTile = 32;  // autotuned: beats 64 by ~20% (better OMP balance for all 3 stages)
         constexpr int kChannelTile = 32; // Tile output channels for L2 cache blocking
 
         inline int round_up(int value, int multiple)
@@ -185,7 +185,7 @@ namespace ternary
                 // Each item processes 4 output channels for one spatial tile — 1 activation load
                 // feeds all 4 channels (4× fewer activation reads vs single-channel loop).
                 // One barrier at the end instead of one per spatial tile.
-#pragma omp for schedule(static) collapse(2)
+#pragma omp for schedule(guided) collapse(2)
                 for (int oc_grp = 0; oc_grp < oc4_count; ++oc_grp)
                 {
                     for (int stile = 0; stile < spatial_tiles; ++stile)

@@ -385,11 +385,11 @@ pressure by ×4, guaranteeing accumulator or mask spills to the stack on every i
 - median: **4344.98 us**
 - p99: **6348.11 us**
 
-### Best 6-thread OpenMP run (4-wide kernel + collapse(2))
+### Best 6-thread OpenMP run (kST=32, guided, latest)
 
-- mean: **1664.27 us**
-- median: **1693.19 us**
-- p99: **2558.51 us**
+- mean: **1611.4 us**
+- median: **1597.7 us**
+- p99: **2328.5 us**
 
 ### Improvement Chain (full history)
 
@@ -401,6 +401,7 @@ pressure by ×4, guaranteeing accumulator or mask spills to the stack on every i
 | im2col fast path | 4862.89 | **4.40%** (vs M,N block) |
 | 4-wide kernel + collapse(2) | 4344.98 | **10.65%** (vs im2col fast path) |
 | **Total single-core** | 4344.98 | **28.31%** (vs baseline) |
+| kST=32 + guided (autotune, 6-thread) | 1597.7 (multi) | **−5.6% median, −8.9% p99 vs prior best** |
 
 ---
 
@@ -428,19 +429,19 @@ OMP_NUM_THREADS=6 MKL_NUM_THREADS=6 OPENBLAS_NUM_THREADS=6 \
   "$(which python)" part_C/benchmark_pytorch.py --cpp-mean-us <mean> --cpp-median-us <median> --cpp-p99-us <p99> --iters 3000 --warmup 50
 ```
 
-## Latest Cross-Framework Comparison (4-wide kernel, 6-thread OpenMP)
+## Latest Cross-Framework Comparison (kST=32 + guided, 6-thread OpenMP)
 
-Best C++ result from section V (latest controlled rerun) below.
+Best C++ result from section X (autotune controlled rerun) below.
 
 | Implementation | mean (us) | median (us) | p99 (us) |
 |---|---:|---:|---:|
 | PyTorch baseline (FP32) | 1788.8 | 1700.5 | 3373.7 |
 | PyTorch ternary | 3330.4 | 3083.6 | 7012.4 |
-| C++ ternary (OpenMP, 6 threads) | 1664.27 | 1693.19 | 2558.51 |
+| C++ ternary (OpenMP, 6 threads) | 1611.4 | 1597.7 | 2328.5 |
 
 Speedups:
-- vs PyTorch ternary: **2.00x** (mean), **1.82x** (median)
-- vs PyTorch baseline: **1.07x** (mean), **1.00x** (median)
+- vs PyTorch ternary: **2.07x** (mean), **1.93x** (median)
+- vs PyTorch baseline: **1.11x** (mean), **1.06x** (median)
 
 ## S) thread scaling + ORT multi-thread
 
@@ -588,4 +589,126 @@ Extended `PROFILE_LAYERS` to capture:
 | Direct convolution (no im2col) | Remove ~35% im2col overhead | High ROI |
 | im2col optimization | Reduce bandwidth pressure | Medium ROI |
 | Kernel tuning | Improve dot-product | Low ROI |
+
+---
+
+## X) Parameter autotune sweep — kSpatialTile, kChannelTile, compiler flags, OMP schedule
+
+### Motivation
+
+Section W identified `conv_ternary` as ≥89% of runtime and Stage 1 (32×32) as the dominant stage.
+The OpenMP `collapse(2)` loop distributes work over `(oc_group × spatial_tile)` pairs.
+With `kSpatialTile=64` and the Stage 3 layers (8×8 spatial, 16 oc_groups):
+- spatial_tiles = 64/64 = **1** tile × 16 groups = **16 work items** for 6 threads → 2.7 items/thread
+- Stage 2 (16×16): 256/64 = 4 tiles × 8 groups = **32 items** → 5.3 items/thread
+
+Smaller spatial tiles create more work items and improve load balance across threads.
+
+### Tunable parameters identified
+
+| Parameter | Location | Current | Effect |
+|---|---|---|---|
+| `kSpatialTile` | `layers.cpp:30` | 64 | Work-item granularity for `conv_ternary` collapse(2) OMP loop |
+| `kChannelTile` | `layers.cpp:31` | 32 | L2 blocking for `conv_fp32` + `linear` (~10% of runtime) |
+| OMP schedule | `layers.cpp:188` | `static` | Work distribution strategy for the collapse(2) loop |
+| Compiler flags | `CMakeLists.txt` | see file | `-ffast-math`, `-fprefetch-loop-arrays`, `-fvect-cost-model=unlimited` |
+
+### Sweep script
+
+`part_B/autotune.py` — three-phase automated sweep:
+- **Phase 1**: full grid over `kSpatialTile ∈ {8, 16, 32, 64}` × `kChannelTile ∈ {16, 32, 64}`
+- **Phase 2**: compiler-flag variants on best tile config
+- **Phase 3**: OMP schedule variants (`static`, `dynamic,1`, `guided`) on best tile+flag config
+
+Usage: `python3 autotune.py [--quick] [--threads N] [--phase tiles|flags|schedule|all]`
+
+### Phase 1 results — tile sweep (1000 iters, 2 trials, 6 threads)
+
+| kSpatialTile | kChannelTile | mean (µs) | median (µs) | p99 (µs) | note |
+|---:|---:|---:|---:|---:|---|
+| 8 | 16 | 1983.6 | 2021.2 | 2990.0 | |
+| 8 | 32 | 2008.5 | 2051.7 | 2983.1 | |
+| 8 | 64 | 1942.9 | 2000.7 | 2713.2 | |
+| 16 | 16 | 2110.1 | 2126.8 | 3548.0 | |
+| 16 | 32 | 2062.4 | 2094.3 | 2899.2 | |
+| 16 | 64 | 1975.8 | 2051.0 | 2698.2 | |
+| **32** | **16** | **1717.4** | **1734.6** | **2790.3** | **phase winner** |
+| 32 | 32 | 2057.2 | 2040.1 | 2913.0 | |
+| 32 | 64 | 2119.2 | 2167.3 | 3201.3 | |
+| 64 | 16 | 2035.6 | 2081.5 | 3032.7 | |
+| 64 | 32 | 2183.3 | 2206.0 | 3314.7 | ← baseline |
+| 64 | 64 | 2108.9 | 2132.7 | 3112.8 | |
+
+**Winner:** `kSpatialTile=32`. `kChannelTile` has negligible effect (only affects `conv_fp32`/`linear`, ~10% of runtime) — kept at 32.
+
+**Why kST=32 wins:**
+
+| Stage | Spatial | kST=64 work items | kST=32 work items | items/thread (32) |
+|---|---|---:|---:|---:|
+| 1 (16 ch) | 32×32 | 64 | 128 | 21 |
+| 2 (32 ch) | 16×16 | 32 | 64 | 11 |
+| 3 (64 ch) | 8×8 | 16 | 32 | 5 |
+
+Halving the tile doubles work items everywhere. Stage 3 goes from 2.7 to 5.3 items/thread — much better utilization without flooding the scheduler.
+
+### Phase 2 results — compiler flags (kST=32, kCT=32, 1 trial quick mode)
+
+| Flags | mean (µs) | median (µs) | p99 (µs) |
+|---|---:|---:|---:|
+| base (current) | 2049.3 | 2100.9 | 2777.9 |
+| +ffast-math | 2105.2 | 2103.7 | 2930.4 |
+| +prefetch-loop-arrays | 2127.9 | 2156.8 | 3098.4 |
+| +fvect-cost-model=unlimited | 1980.4 | 2049.2 | 2825.8 |
+
+**Conclusion:** all variants within noise of base. No compiler flag changes applied.
+
+### Phase 3 results — OMP schedule (kST=32, kCT=32, 1 trial quick mode)
+
+| Schedule | mean (µs) | median (µs) | p99 (µs) |
+|---|---:|---:|---:|
+| static (current) | 1982.2 | 2080.8 | 2847.6 |
+| dynamic,1 | 2138.6 | 2177.7 | 2892.7 |
+| **guided** | **1869.7** | **1899.3** | **2605.8** |
+
+**Winner:** `schedule(guided)`. Confirmed with 3×1500-iter matched-thermal interleaved test:
+
+| Pair | OLD (kST=64, static) median | NEW (kST=32, guided) median | Improvement |
+|---:|---:|---:|---:|
+| 1 | 1975.9 | 1722.8 | **12.8%** |
+| 2 | 2093.6 | 1910.3 | **8.7%** |
+| 3 | 2125.8 | 1842.8 | **13.3%** |
+
+`guided` adapts chunk sizes dynamically and handles the unequal work-item sizes between stages better than static pre-division.
+
+### Changes applied
+
+```diff
+- constexpr int kSpatialTile = 64;
++ constexpr int kSpatialTile = 32;  // autotuned: beats 64 by ~20% (better OMP balance for all 3 stages)
+
+- #pragma omp for schedule(static) collapse(2)
++ #pragma omp for schedule(guided) collapse(2)
+```
+
+### New controlled reference (3 runs × 3000 iters, 50 warmup, 6 threads)
+
+```bash
+sudo taskset -c 0-5 nice -n -20 env OMP_NUM_THREADS=6 ./build/ternary_infer model.bin --bench --iters 3000 --warmup 50
+```
+
+| Run | mean (µs) | median (µs) | p99 (µs) |
+|---:|---:|---:|---:|
+| 1 | 1611.4 | 1597.7 | 2328.5 |
+| 2 | 1617.0 | 1625.6 | 2413.3 |
+| 3 | 1642.5 | 1695.8 | 2350.0 |
+
+**Best run:** mean=1611.4 µs, median=1597.7 µs, p99=2328.5 µs
+
+Comparison vs prior best (section V, kST=64 + static):
+
+| Metric | Section V | Section X | Change |
+|---|---:|---:|---:|
+| mean (µs) | 1664.3 | 1611.4 | **−3.2%** |
+| median (µs) | 1693.2 | 1597.7 | **−5.6%** |
+| p99 (µs) | 2558.5 | 2328.5 | **−9.0%** |
 

@@ -1,0 +1,119 @@
+{
+  "timestamp": "2026-04-11T21:39:44.848163",
+  "settings": {
+    "iters": 1000,
+    "warmup": 30,
+    "trials": 2,
+    "threads": 6
+  },
+  "results": [
+    {
+      "phase": "tiles",
+      "label": "kST=  8  kCT= 16",
+      "kSpatialTile": 8,
+      "kChannelTile": 16,
+      "mean": 1983.59,
+      "median": 2021.21,
+      "p99": 2990.0
+    },
+    {
+      "phase": "tiles",
+      "label": "kST=  8  kCT= 32",
+      "kSpatialTile": 8,
+      "kChannelTile": 32,
+      "mean": 2008.46,
+      "median": 2051.67,
+      "p99": 2983.14
+    },
+    {
+      "phase": "tiles",
+      "label": "kST=  8  kCT= 64",
+      "kSpatialTile": 8,
+      "kChannelTile": 64,
+      "mean": 1942.86,
+      "median": 2000.72,
+      "p99": 2713.21
+    },
+    {
+      "phase": "tiles",
+      "label": "kST= 16  kCT= 16",
+      "kSpatialTile": 16,
+      "kChannelTile": 16,
+      "mean": 2110.14,
+      "median": 2126.85,
+      "p99": 3548.03
+    },
+    {
+      "phase": "tiles",
+      "label": "kST= 16  kCT= 32",
+      "kSpatialTile": 16,
+      "kChannelTile": 32,
+      "mean": 2062.42,
+      "median": 2094.3,
+      "p99": 2899.16
+    },
+    {
+      "phase": "tiles",
+      "label": "kST= 16  kCT= 64",
+      "kSpatialTile": 16,
+      "kChannelTile": 64,
+      "mean": 1975.82,
+      "median": 2051.0,
+      "p99": 2698.21
+    },
+    {
+      "phase": "tiles",
+      "label": "kST= 32  kCT= 16",
+      "kSpatialTile": 32,
+      "kChannelTile": 16,
+      "mean": 1717.37,
+      "median": 1734.57,
+      "p99": 2790.35
+    },
+    {
+      "phase": "tiles",
+      "label": "kST= 32  kCT= 32",
+      "kSpatialTile": 32,
+      "kChannelTile": 32,
+      "mean": 2057.17,
+      "median": 2040.1,
+      "p99": 2913.0
+    },
+    {
+      "phase": "tiles",
+      "label": "kST= 32  kCT= 64",
+      "kSpatialTile": 32,
+      "kChannelTile": 64,
+      "mean": 2119.2,
+      "median": 2167.33,
+      "p99": 3201.28
+    },
+    {
+      "phase": "tiles",
+      "label": "kST= 64  kCT= 16",
+      "kSpatialTile": 64,
+      "kChannelTile": 16,
+      "mean": 2035.61,
+      "median": 2081.53,
+      "p99": 3032.73
+    },
+    {
+      "phase": "tiles",
+      "label": "kST= 64  kCT= 32",
+      "kSpatialTile": 64,
+      "kChannelTile": 32,
+      "mean": 2183.26,
+      "median": 2206.02,
+      "p99": 3314.7
+    },
+    {
+      "phase": "tiles",
+      "label": "kST= 64  kCT= 64",
+      "kSpatialTile": 64,
+      "kChannelTile": 64,
+      "mean": 2108.86,
+      "median": 2132.73,
+      "p99": 3112.82
+    }
+  ]
+}

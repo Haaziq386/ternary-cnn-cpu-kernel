@@ -64,7 +64,7 @@ namespace ternary
 
     } // namespace
 
-    float dot_product_fp32_avx2(const float *lhs, const float *rhs, int length)
+    float dot_product_fp32_avx2(const float *__restrict lhs, const float *__restrict rhs, int length)
     {
         __m256 acc0 = _mm256_setzero_ps();
         __m256 acc1 = _mm256_setzero_ps();
@@ -96,8 +96,10 @@ namespace ternary
         return sum;
     }
 
-    float dot_product_ternary_avx2(const float *activation, const std::uint8_t *pos_bits,
-                                   const std::uint8_t *neg_bits, int packed_bytes)
+    float dot_product_ternary_avx2(const float *__restrict activation,
+                                   const std::uint8_t *__restrict pos_bits,
+                                   const std::uint8_t *__restrict neg_bits,
+                                   int packed_bytes)
     {
         __m256 pos_acc0 = _mm256_setzero_ps();
         __m256 pos_acc1 = _mm256_setzero_ps();
@@ -139,12 +141,12 @@ namespace ternary
     // 4-wide ternary dot product: load activation once, compute 4 output channels.
     // Uses: acc += (x & pos_mask) + ((-x) & neg_mask)
     // where -x = x XOR sign_bit, valid since ternary ensures pos and neg can't both be set.
-    void dot_product_ternary_4x_avx2(const float *activation,
-                                     const std::uint8_t *pos0, const std::uint8_t *neg0,
-                                     const std::uint8_t *pos1, const std::uint8_t *neg1,
-                                     const std::uint8_t *pos2, const std::uint8_t *neg2,
-                                     const std::uint8_t *pos3, const std::uint8_t *neg3,
-                                     int packed_bytes, float *results)
+    void dot_product_ternary_4x_avx2(const float *__restrict activation,
+                                     const std::uint8_t *__restrict pos0, const std::uint8_t *__restrict neg0,
+                                     const std::uint8_t *__restrict pos1, const std::uint8_t *__restrict neg1,
+                                     const std::uint8_t *__restrict pos2, const std::uint8_t *__restrict neg2,
+                                     const std::uint8_t *__restrict pos3, const std::uint8_t *__restrict neg3,
+                                     int packed_bytes, float *__restrict results)
     {
         __m256 acc0 = _mm256_setzero_ps();
         __m256 acc1 = _mm256_setzero_ps();
@@ -158,7 +160,7 @@ namespace ternary
 #endif
         for (; i < packed_bytes; ++i)
         {
-            const __m256 x  = _mm256_loadu_ps(activation + i * 8);
+            const __m256 x = _mm256_loadu_ps(activation + i * 8);
             const __m256 nx = _mm256_xor_ps(x, sign_mask); // negate x
             acc0 = _mm256_add_ps(acc0, _mm256_add_ps(_mm256_and_ps(x, mask_to_ps(pos0[i])), _mm256_and_ps(nx, mask_to_ps(neg0[i]))));
             acc1 = _mm256_add_ps(acc1, _mm256_add_ps(_mm256_and_ps(x, mask_to_ps(pos1[i])), _mm256_and_ps(nx, mask_to_ps(neg1[i]))));
@@ -172,13 +174,12 @@ namespace ternary
         results[3] = horizontal_sum(acc3);
     }
 
-
-    void dot_product_ternary_2x4_avx2(const float *act0, const float *act1,
-                                     const std::uint8_t *pos0, const std::uint8_t *neg0,
-                                     const std::uint8_t *pos1, const std::uint8_t *neg1,
-                                     const std::uint8_t *pos2, const std::uint8_t *neg2,
-                                     const std::uint8_t *pos3, const std::uint8_t *neg3,
-                                     int packed_bytes, float *res0, float *res1)
+    void dot_product_ternary_2x4_avx2(const float *__restrict act0, const float *__restrict act1,
+                                      const std::uint8_t *__restrict pos0, const std::uint8_t *__restrict neg0,
+                                      const std::uint8_t *__restrict pos1, const std::uint8_t *__restrict neg1,
+                                      const std::uint8_t *__restrict pos2, const std::uint8_t *__restrict neg2,
+                                      const std::uint8_t *__restrict pos3, const std::uint8_t *__restrict neg3,
+                                      int packed_bytes, float *__restrict res0, float *__restrict res1)
     {
         __m256 acc0_0 = _mm256_setzero_ps();
         __m256 acc0_1 = _mm256_setzero_ps();

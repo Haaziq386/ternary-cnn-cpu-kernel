@@ -335,9 +335,9 @@ Exporter warning note:
 
 ### Best 6-thread OpenMP run (4-wide kernel + collapse(2))
 
-- mean: **2077.00 us**
-- median: **1788.39 us**
-- p99: **3885.26 us**
+- mean: **1908.09 us**
+- median: **1696.95 us**
+- p99: **3424.06 us**
 
 ### Improvement Chain (full history)
 
@@ -378,17 +378,17 @@ OMP_NUM_THREADS=6 MKL_NUM_THREADS=6 OPENBLAS_NUM_THREADS=6 \
 
 ## Latest Cross-Framework Comparison (4-wide kernel, 6-thread OpenMP)
 
-Best C++ result from section M above.
+Best C++ result from section S (latest controlled rerun) below.
 
 | Implementation | mean (us) | median (us) | p99 (us) |
 |---|---:|---:|---:|
 | PyTorch baseline (FP32) | 1788.8 | 1700.5 | 3373.7 |
 | PyTorch ternary | 3330.4 | 3083.6 | 7012.4 |
-| C++ ternary (OpenMP, 6 threads) | 2077.00 | 1788.39 | 3885.26 |
+| C++ ternary (OpenMP, 6 threads) | 1908.09 | 1696.95 | 3424.06 |
 
 Speedups:
-- vs PyTorch ternary: **1.60x** (mean), **1.72x** (median)
-- vs PyTorch baseline: **0.86x** (mean), **0.95x** (median)
+- vs PyTorch ternary: **1.75x** (mean), **1.82x** (median)
+- vs PyTorch baseline: **0.94x** (mean), **1.00x** (median)
 
 ## S) thread scaling + ORT multi-thread
 
@@ -405,9 +405,9 @@ sudo taskset -c 0-5 nice -n -20 env OMP_NUM_THREADS=6 \
 
 | Run | mean (us) | median (us) | p99 (us) |
 |---|---:|---:|---:|
-| 1 | 1792.98 | 1814.51 | 2579.07 |
-| 2 | 1809.98 | 1848.31 | 2635.37 |
-| 3 | 1858.46 | 1872.62 | 2763.98 |
+| 1 | 1908.09 | 1696.95 | 3424.06 |
+| 2 | 1949.93 | 1717.83 | 4516.74 |
+| 3 | 1974.39 | 1783.22 | 3839.43 |
 
 8-thread exploratory run:
 
@@ -441,4 +441,47 @@ sudo nice -n -20 "$(which python)" benchmark_onnx.py --iters 3000 --warmup 50 --
 
 1. In `part_C`, use `"$(which python)"` with `sudo` to avoid `python: No such file or directory`.
 2. `./build/ternary_infer` only exists in `part_B`, so run that command from `part_B`.
+
+## T) Const/restrict micro-optimization pass
+
+Goal: apply low-risk compile-time and aliasing improvements in Part B hot paths without changing model behavior.
+
+### Code changes
+
+1. Added compiler-friendly aliasing contracts (`__restrict`) to AVX2 kernel interfaces and definitions.
+2. Hoisted repeated `.data()` base-pointer lookups in `conv_fp32` and `conv_ternary`.
+3. Tightened local const usage and made small helper intent explicit (`inline round_up`).
+4. Kept all algorithmic structure unchanged (no layout/packing format changes).
+
+### Quick performance sanity checks
+
+Commands used during this pass:
+
+```bash
+# Short sanity run (not controlled)
+./build/ternary_infer model.bin --bench --iters 500 --warmup 20
+
+# Cleaner single-core check
+taskset -c 0 env OMP_NUM_THREADS=1 \
+  ./build/ternary_infer model.bin --bench --iters 800 --warmup 30
+```
+
+Observed outputs:
+
+| Run type | mean (us) | median (us) | p99 (us) |
+|---|---:|---:|---:|
+| Short sanity (500/20) | 2842.80 | 1794.00 | 15046.69 |
+| Single-core check (800/30, pinned) | 4554.06 | 4334.38 | 6823.60 |
+
+### Follow-up controlled multi-core rerun (6 threads)
+
+After this pass, controlled reruns were recorded (also summarized in section S):
+
+| Run | mean (us) | median (us) | p99 (us) |
+|---|---:|---:|---:|
+| 1 | 1908.09 | 1696.95 | 3424.06 |
+| 2 | 1949.93 | 1717.83 | 4516.74 |
+| 3 | 1974.39 | 1783.22 | 3839.43 |
+
+Conclusion: the pass preserved correctness and maintained the current performance envelope while simplifying hot-path runtime state (better const/restrict intent, fewer repeated lookups).
 

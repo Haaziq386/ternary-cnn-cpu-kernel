@@ -15,7 +15,7 @@ namespace ternary
         constexpr int kSpatialTile = 64;
         constexpr int kChannelTile = 32; // Tile output channels for L2 cache blocking
 
-        int round_up(int value, int multiple)
+        inline int round_up(int value, int multiple)
         {
             return ((value + multiple - 1) / multiple) * multiple;
         }
@@ -89,6 +89,8 @@ namespace ternary
         const int output_spatial = weights.output_h * weights.output_w;
         const float *col_base = im2col_buffer.data();
         float *out_base = output.ptr();
+        const float *const weight_base = weights.weight.data();
+        const float *const bias_base = weights.has_bias ? weights.bias.data() : nullptr;
         for (int n = 0; n < input.n; ++n)
         {
             const float *sample_cols = col_base + static_cast<std::size_t>(n) * output_spatial * k_pad;
@@ -108,11 +110,11 @@ namespace ternary
                             const float *activation_row = sample_cols + static_cast<std::size_t>(spatial) * k_pad;
                             for (int oc = oc_base; oc < oc_end; ++oc)
                             {
-                                const float *weight_row = weights.weight.data() + static_cast<std::size_t>(oc) * kernel_elements;
+                                const float *weight_row = weight_base + static_cast<std::size_t>(oc) * kernel_elements;
                                 float value = dot_product_fp32_avx2(weight_row, activation_row, kernel_elements);
                                 if (weights.has_bias)
                                 {
-                                    value += weights.bias[oc];
+                                    value += bias_base[oc];
                                 }
                                 sample_out[static_cast<std::size_t>(oc) * output_spatial + spatial] = value;
                             }
@@ -135,6 +137,10 @@ namespace ternary
         const int packed_bytes = weights.k_pad / 8;
         const float *col_base = im2col_buffer.data();
         float *out_base = output.ptr();
+        const std::uint8_t *const pos_base = weights.pos_bits.data();
+        const std::uint8_t *const neg_base = weights.neg_bits.data();
+        const float *const scale_base = weights.scale.data();
+        const float *const bias_base = weights.bias.data();
 
         // Number of 4-wide output channel groups and remainder
         const int oc4_count = weights.out_channels / 4;
@@ -161,19 +167,19 @@ namespace ternary
                         const int sp_base = stile * kSpatialTile;
                         const int sp_end = std::min(sp_base + kSpatialTile, output_spatial);
 
-                        const std::uint8_t *pos0 = weights.pos_bits.data() + static_cast<std::size_t>(oc_base + 0) * packed_bytes;
-                        const std::uint8_t *neg0 = weights.neg_bits.data() + static_cast<std::size_t>(oc_base + 0) * packed_bytes;
-                        const std::uint8_t *pos1 = weights.pos_bits.data() + static_cast<std::size_t>(oc_base + 1) * packed_bytes;
-                        const std::uint8_t *neg1 = weights.neg_bits.data() + static_cast<std::size_t>(oc_base + 1) * packed_bytes;
-                        const std::uint8_t *pos2 = weights.pos_bits.data() + static_cast<std::size_t>(oc_base + 2) * packed_bytes;
-                        const std::uint8_t *neg2 = weights.neg_bits.data() + static_cast<std::size_t>(oc_base + 2) * packed_bytes;
-                        const std::uint8_t *pos3 = weights.pos_bits.data() + static_cast<std::size_t>(oc_base + 3) * packed_bytes;
-                        const std::uint8_t *neg3 = weights.neg_bits.data() + static_cast<std::size_t>(oc_base + 3) * packed_bytes;
+                        const std::uint8_t *pos0 = pos_base + static_cast<std::size_t>(oc_base + 0) * packed_bytes;
+                        const std::uint8_t *neg0 = neg_base + static_cast<std::size_t>(oc_base + 0) * packed_bytes;
+                        const std::uint8_t *pos1 = pos_base + static_cast<std::size_t>(oc_base + 1) * packed_bytes;
+                        const std::uint8_t *neg1 = neg_base + static_cast<std::size_t>(oc_base + 1) * packed_bytes;
+                        const std::uint8_t *pos2 = pos_base + static_cast<std::size_t>(oc_base + 2) * packed_bytes;
+                        const std::uint8_t *neg2 = neg_base + static_cast<std::size_t>(oc_base + 2) * packed_bytes;
+                        const std::uint8_t *pos3 = pos_base + static_cast<std::size_t>(oc_base + 3) * packed_bytes;
+                        const std::uint8_t *neg3 = neg_base + static_cast<std::size_t>(oc_base + 3) * packed_bytes;
 
-                        const float s0 = weights.scale[oc_base + 0], b0 = weights.bias[oc_base + 0];
-                        const float s1 = weights.scale[oc_base + 1], b1 = weights.bias[oc_base + 1];
-                        const float s2 = weights.scale[oc_base + 2], b2 = weights.bias[oc_base + 2];
-                        const float s3 = weights.scale[oc_base + 3], b3 = weights.bias[oc_base + 3];
+                        const float s0 = scale_base[oc_base + 0], b0 = bias_base[oc_base + 0];
+                        const float s1 = scale_base[oc_base + 1], b1 = bias_base[oc_base + 1];
+                        const float s2 = scale_base[oc_base + 2], b2 = bias_base[oc_base + 2];
+                        const float s3 = scale_base[oc_base + 3], b3 = bias_base[oc_base + 3];
 
                         float *out0 = sample_out + static_cast<std::size_t>(oc_base + 0) * output_spatial;
                         float *out1 = sample_out + static_cast<std::size_t>(oc_base + 1) * output_spatial;
@@ -184,8 +190,8 @@ namespace ternary
                         {
                             const float *act0 = sample_cols + static_cast<std::size_t>(spatial) * weights.k_pad;
                             const float *act1 = sample_cols + static_cast<std::size_t>(spatial + 1) * weights.k_pad;
-                            float res0[4];
-                            float res1[4];
+                            alignas(16) float res0[4];
+                            alignas(16) float res1[4];
                             dot_product_ternary_2x4_avx2(act0, act1, pos0, neg0, pos1, neg1, pos2, neg2, pos3, neg3, packed_bytes, res0, res1);
                             if (fuse_relu)
                             {
@@ -217,7 +223,7 @@ namespace ternary
                         {
                             int spatial = sp_end - 1;
                             const float *act = sample_cols + static_cast<std::size_t>(spatial) * weights.k_pad;
-                            float res[4];
+                            alignas(16) float res[4];
                             dot_product_ternary_4x_avx2(act, pos0, neg0, pos1, neg1, pos2, neg2, pos3, neg3, packed_bytes, res);
                             if (fuse_relu)
                             {
@@ -244,13 +250,13 @@ namespace ternary
 #pragma omp for schedule(static)
                     for (int oc = oc_rem_base; oc < weights.out_channels; ++oc)
                     {
-                        const std::uint8_t *pos_row = weights.pos_bits.data() + static_cast<std::size_t>(oc) * packed_bytes;
-                        const std::uint8_t *neg_row = weights.neg_bits.data() + static_cast<std::size_t>(oc) * packed_bytes;
+                        const std::uint8_t *pos_row = pos_base + static_cast<std::size_t>(oc) * packed_bytes;
+                        const std::uint8_t *neg_row = neg_base + static_cast<std::size_t>(oc) * packed_bytes;
                         for (int spatial = 0; spatial < output_spatial; ++spatial)
                         {
                             const float *act = sample_cols + static_cast<std::size_t>(spatial) * weights.k_pad;
                             float value = dot_product_ternary_avx2(act, pos_row, neg_row, packed_bytes);
-                            value = value * weights.scale[oc] + weights.bias[oc];
+                            value = value * scale_base[oc] + bias_base[oc];
                             sample_out[static_cast<std::size_t>(oc) * output_spatial + spatial] = fuse_relu ? std::max(0.0f, value) : value;
                         }
                     }

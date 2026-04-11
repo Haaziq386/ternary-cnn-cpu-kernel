@@ -1,5 +1,6 @@
 #include "resnet20.h"
 
+#include <array>
 #include "layers.h"
 
 #ifdef PROFILE_LAYERS
@@ -39,6 +40,17 @@ namespace ternary
         long long t_add          = 0;
         long long t_pool         = 0;
         long long t_linear       = 0;
+
+        // Per-stage ternary conv totals (ResNet20: 3 blocks × 3 stages = 9 blocks total)
+        // Stage 1: blocks 0-2 (16 ch, 32×32), Stage 2: blocks 3-5 (32 ch, 16×16),
+        // Stage 3: blocks 6-8 (64 ch, 8×8)
+        std::array<long long, 3> t_stage_ternary = {0, 0, 0};
+        // im2col vs. dot-product breakdown accumulated across all 18 ternary convs
+        long long t_all_im2col = 0;
+        long long t_all_dot    = 0;
+
+        // Reset global breakdown counter before this forward pass
+        g_ternary_breakdown = {};
 #endif
 
         const Tensor *current = &input;
@@ -47,8 +59,16 @@ namespace ternary
         TIME_CALL(t_relu,      relu_inplace(scratch.a));
         current = &scratch.a;
 
-        for (const auto &block : model.blocks)
+        for (int block_idx = 0; block_idx < static_cast<int>(model.blocks.size()); ++block_idx)
         {
+            const auto &block = model.blocks[block_idx];
+#ifdef PROFILE_LAYERS
+            // Snapshot breakdown before this block's two ternary convs
+            long long snap_im2col = g_ternary_breakdown.im2col_us;
+            long long snap_dot    = g_ternary_breakdown.dot_us;
+            long long snap_total  = t_conv_ternary;
+#endif
+            (void)block_idx; // suppress unused-variable warning in non-profile builds
             Tensor *conv1_out = nullptr;
             Tensor *conv2_out = nullptr;
             Tensor *proj_out  = nullptr;
@@ -85,6 +105,14 @@ namespace ternary
             }
             TIME_CALL(t_relu, relu_inplace(*conv2_out));
             current = conv2_out;
+
+#ifdef PROFILE_LAYERS
+            {
+                int stage = block_idx / 3; // 0, 1, or 2
+                t_stage_ternary[stage] += t_conv_ternary - snap_total;
+                (void)snap_im2col; (void)snap_dot;
+            }
+#endif
         }
 
         Tensor pooled;
@@ -95,10 +123,22 @@ namespace ternary
         TIME_CALL(t_linear, linear(pooled, model.fc, logits));
 
 #ifdef PROFILE_LAYERS
+        t_all_im2col = g_ternary_breakdown.im2col_us;
+        t_all_dot    = g_ternary_breakdown.dot_us;
+
         long long total = t_conv_fp32 + t_conv_ternary + t_relu + t_add + t_pool + t_linear;
         std::printf("\n[PROFILE] layer breakdown (accumulated over 1 forward pass):\n");
         std::printf("  conv_fp32 total:     %6lld us  (stem + 3 projections)\n", t_conv_fp32);
         std::printf("  conv_ternary total:  %6lld us  (18 residual convs)\n",    t_conv_ternary);
+        std::printf("    |- im2col:         %6lld us  (%4.1f%% of ternary)\n",
+                    t_all_im2col,
+                    t_conv_ternary > 0 ? 100.0 * t_all_im2col / t_conv_ternary : 0.0);
+        std::printf("    |- dot product:    %6lld us  (%4.1f%% of ternary)\n",
+                    t_all_dot,
+                    t_conv_ternary > 0 ? 100.0 * t_all_dot / t_conv_ternary : 0.0);
+        std::printf("    |- stage 1 (16ch 32x32): %6lld us\n", t_stage_ternary[0]);
+        std::printf("    |- stage 2 (32ch 16x16): %6lld us\n", t_stage_ternary[1]);
+        std::printf("    |- stage 3 (64ch  8x8):  %6lld us\n", t_stage_ternary[2]);
         std::printf("  relu total:          %6lld us\n",                          t_relu);
         std::printf("  add total:           %6lld us\n",                          t_add);
         std::printf("  global_avg_pool:     %6lld us\n",                          t_pool);

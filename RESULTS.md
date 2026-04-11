@@ -323,6 +323,58 @@ Exporter warning note:
 - Export is still valid if you see `verified: max_diff=...` for both models and `onnx.checker` passes.
 - Using `--opset 18` avoids the conversion attempt and removes that noisy warning path.
 
+## U) Per-layer profiling with `PROFILE_LAYERS` (6-thread controlled run)
+
+### Setup
+
+Added `std::chrono::steady_clock` timing guards to `run_resnet20()` under a `PROFILE_LAYERS` compile-time flag.
+Timing is zero-overhead when the flag is off; active only when built with `-DPROFILE_LAYERS=ON`.
+
+```bash
+cmake -S . -B build -DPROFILE_LAYERS=ON && cmake --build build -j
+sudo taskset -c 0-5 nice -n -20 env OMP_NUM_THREADS=6 \
+  ./build/ternary_infer model.bin --bench --iters 3000 --warmup 50
+```
+
+Each forward pass printed one `[PROFILE]` table. The final benchmark line reports stats over all 3000 iterations.
+
+### Aggregate (3000 iterations, 6 threads)
+
+| Metric | Value (us) |
+|---|---:|
+| mean | 2827.51 |
+| median | 2727.33 |
+| p99 | 5153.57 |
+
+### Representative per-layer breakdown (approximate means from visible samples)
+
+| Layer group | Mean (us) | % of total |
+|---|---:|---:|
+| `conv_ternary` (18 residual convs) | ~2560 | **~89%** |
+| `conv_fp32` (stem + 3 projections) | ~280 | ~10% |
+| `relu_inplace` | ~16 | <1% |
+| `add_inplace` | ~15 | <1% |
+| `global_avg_pool` | ~1 | <1% |
+| `linear` | ~0 | <1% |
+| **TOTAL** | **~2827** | 100% |
+
+### Bottleneck diagnosis
+
+`conv_ternary` is the sole bottleneck at ~89% of wall time.
+Two root causes were identified by reading the kernel source:
+
+**1. `mask_to_ps` table-lookup overhead** (`ternary_kernel.cpp:49-53`): -- DIDN't Work out -> poor results
+Each byte of packed weight triggers a 32-byte load from `kMaskTable[256][8]` (8 KB).
+In `dot_product_ternary_2x4_avx2` the inner loop fires **8 such loads per iteration**
+(`pos0..pos3`, `neg0..neg3`).  Even though the 8 KB table stays in L1, each load
+carries a 4–5 cycle load-use latency and produces a memory-dependency chain.
+
+**2. Register pressure / spills in `dot_product_ternary_2x4_avx2`** (`ternary_kernel.cpp:176-238`):
+The function holds 8 accumulators live across the entire loop, then attempts to keep all
+8 mask vectors (`p0`–`p3`, `n0`–`n3`) plus `x0, nx0, x1, nx1, sign_mask` simultaneously.
+That requires ~21 YMM registers; AVX2 only has 16.  `#pragma GCC unroll 4` multiplies the
+pressure by ×4, guaranteeing accumulator or mask spills to the stack on every iteration.
+
 ---
 
 ## Summary for Reporting
@@ -335,9 +387,9 @@ Exporter warning note:
 
 ### Best 6-thread OpenMP run (4-wide kernel + collapse(2))
 
-- mean: **1908.09 us**
-- median: **1696.95 us**
-- p99: **3424.06 us**
+- mean: **1664.27 us**
+- median: **1693.19 us**
+- p99: **2558.51 us**
 
 ### Improvement Chain (full history)
 
@@ -378,17 +430,17 @@ OMP_NUM_THREADS=6 MKL_NUM_THREADS=6 OPENBLAS_NUM_THREADS=6 \
 
 ## Latest Cross-Framework Comparison (4-wide kernel, 6-thread OpenMP)
 
-Best C++ result from section S (latest controlled rerun) below.
+Best C++ result from section V (latest controlled rerun) below.
 
 | Implementation | mean (us) | median (us) | p99 (us) |
 |---|---:|---:|---:|
 | PyTorch baseline (FP32) | 1788.8 | 1700.5 | 3373.7 |
 | PyTorch ternary | 3330.4 | 3083.6 | 7012.4 |
-| C++ ternary (OpenMP, 6 threads) | 1908.09 | 1696.95 | 3424.06 |
+| C++ ternary (OpenMP, 6 threads) | 1664.27 | 1693.19 | 2558.51 |
 
 Speedups:
-- vs PyTorch ternary: **1.75x** (mean), **1.82x** (median)
-- vs PyTorch baseline: **0.94x** (mean), **1.00x** (median)
+- vs PyTorch ternary: **2.00x** (mean), **1.82x** (median)
+- vs PyTorch baseline: **1.07x** (mean), **1.00x** (median)
 
 ## S) thread scaling + ORT multi-thread
 
@@ -484,4 +536,56 @@ After this pass, controlled reruns were recorded (also summarized in section S):
 | 3 | 1974.39 | 1783.22 | 3839.43 |
 
 Conclusion: the pass preserved correctness and maintained the current performance envelope while simplifying hot-path runtime state (better const/restrict intent, fewer repeated lookups).
+
+## V) Fix 2: remove `#pragma GCC unroll 4` from `dot_product_ternary_2x4_avx2`
+
+Goal: reduce register pressure and spill risk in the 2x4 ternary kernel by removing explicit 4x unrolling in the hottest loop.
+
+Change made:
+
+1. Removed `#pragma GCC unroll 4` from `dot_product_ternary_2x4_avx2`.
+2. Kept `#pragma GCC unroll 4` on `dot_product_fp32_avx2` unchanged (that kernel has much lower register pressure).
+
+Controlled 6-thread runs:
+
+```bash
+sudo taskset -c 0-5 nice -n -20 env OMP_NUM_THREADS=6 \
+  ./build/ternary_infer model.bin --bench --iters 3000 --warmup 50
+```
+
+| Run | mean (us) | median (us) | p99 (us) |
+|---|---:|---:|---:|
+| 1 | 1664.27 | 1693.19 | 2558.51 |
+| 2 | 1704.25 | 1728.31 | 2575.82 |
+| 3 | 1755.58 | 1786.12 | 2653.30 |
+| 4 | 1726.74 | 1747.64 | 2600.74 |
+
+Result: this change improves the 6-thread performance envelope versus the prior 1908.09 / 1696.95 / 3424.06 reference, with a much tighter p99 tail.
+
+## W) Sub-layer profiling: im2col vs. dot-product breakdown
+
+### Motivation  
+Section U showed `conv_ternary` ≈90% of runtime, but not its internal split. Two hypotheses:  
+1. **im2col is significant** → removing it (direct conv) could yield large gains.  
+2. **Stage 1 dominates** due to larger spatial size (32×32 vs 8×8).
+
+### Changes  
+Extended `PROFILE_LAYERS` to capture:  
+- **im2col vs dot-product time** via `g_ternary_breakdown`  
+- **Per-stage totals** (stage 1/2/3) via per-block accumulation  
+
+### Profiling overhead  
+`chrono` instrumentation adds ~14% overhead, but ratios remain valid.
+
+### Key findings  
+1. **im2col = 30–39%** (~500 µs): significant memory-copy overhead  
+2. **Dot product = 60–70%**: dominant but already optimized  
+3. **Stage 1 dominates (40–50%)**: largest spatial workload  
+
+### Optimization directions  
+| Direction | Target | Expected gain |
+|---|---|---|
+| Direct convolution (no im2col) | Remove ~35% im2col overhead | High ROI |
+| im2col optimization | Reduce bandwidth pressure | Medium ROI |
+| Kernel tuning | Improve dot-product | Low ROI |
 

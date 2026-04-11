@@ -16,4 +16,15 @@ namespace ternary
     void global_avg_pool(const Tensor &input, Tensor &output);
     void linear(const Tensor &input, const LinearWeights &weights, Tensor &output);
 
+#ifdef PROFILE_LAYERS
+    // Accumulates im2col vs. dot-product time across all conv_ternary calls.
+    // Reset before each forward pass; read after to get the split.
+    struct TernaryConvBreakdown
+    {
+        long long im2col_us = 0;
+        long long dot_us    = 0;
+    };
+    extern TernaryConvBreakdown g_ternary_breakdown;
+#endif
+
 } // namespace ternary

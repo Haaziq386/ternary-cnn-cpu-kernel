@@ -7,6 +7,21 @@
 
 #include "ternary_kernel.h"
 
+#ifdef PROFILE_LAYERS
+#include <chrono>
+namespace ternary {
+TernaryConvBreakdown g_ternary_breakdown;
+}
+namespace {
+using Clock = std::chrono::steady_clock;
+using us_t  = std::chrono::microseconds;
+inline long long layer_elapsed_us(Clock::time_point t0, Clock::time_point t1)
+{
+    return std::chrono::duration_cast<us_t>(t1 - t0).count();
+}
+} // anonymous namespace
+#endif
+
 namespace ternary
 {
     namespace
@@ -129,9 +144,21 @@ namespace ternary
                       std::vector<float> &im2col_buffer, bool fuse_relu)
     {
         output.resize(input.n, weights.out_channels, weights.output_h, weights.output_w);
+#ifdef PROFILE_LAYERS
+        {
+            auto _t0 = std::chrono::steady_clock::now();
+            im2col(input, weights.kernel_h, weights.kernel_w, weights.stride_h, weights.stride_w,
+                   weights.padding_h, weights.padding_w, weights.output_h, weights.output_w, weights.k_pad,
+                   im2col_buffer);
+            auto _t1 = std::chrono::steady_clock::now();
+            g_ternary_breakdown.im2col_us += layer_elapsed_us(_t0, _t1);
+        }
+        auto _dot_t0 = std::chrono::steady_clock::now();
+#else
         im2col(input, weights.kernel_h, weights.kernel_w, weights.stride_h, weights.stride_w,
                weights.padding_h, weights.padding_w, weights.output_h, weights.output_w, weights.k_pad,
                im2col_buffer);
+#endif
 
         const int output_spatial = weights.output_h * weights.output_w;
         const int packed_bytes = weights.k_pad / 8;
@@ -263,6 +290,9 @@ namespace ternary
                 }
             }
         }
+#ifdef PROFILE_LAYERS
+        g_ternary_breakdown.dot_us += layer_elapsed_us(_dot_t0, std::chrono::steady_clock::now());
+#endif
     }
 
     void relu_inplace(Tensor &tensor)

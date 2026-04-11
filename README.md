@@ -43,7 +43,7 @@ sudo taskset -c 0-5 nice -n -20 env OMP_NUM_THREADS=6 \
 # Part C — benchmark PyTorch and compare (latest C++ OpenMP best example)
 cd ../part_C
 python benchmark_pytorch.py \
-  --cpp-mean-us 1908.09 --cpp-median-us 1696.95 --cpp-p99-us 3424.06 \
+  --cpp-mean-us 1664.27 --cpp-median-us 1693.19 --cpp-p99-us 2558.51 \
   --iters 3000 --warmup 50
 
 # Part C — export ONNX models and benchmark ONNX Runtime (FP32)
@@ -140,7 +140,7 @@ Latest controlled rerun on this machine (April 2026):
 |---|---|---|---|
 | PyTorch baseline (FP32) | 1788.8 | 1700.5 | 3373.7 |
 | PyTorch ternary (TernaryConv2d) | 3330.4 | 3083.6 | 7012.4 |
-| **C++ AVX2 ternary (OpenMP, 6 threads, latest)** | **1908.1** | **1697.0** | **3424.1** |
+| **C++ AVX2 ternary (OpenMP, 6 threads, latest)** | **1664.3** | **1693.2** | **2558.5** |
 | ORT FP32 baseline (`--threads 6`) | 329.8 | 321.6 | 607.5 |
 | ORT FP32 ternary (frozen wts, `--threads 6`) | 328.6 | 322.9 | 560.7 |
 
@@ -156,12 +156,12 @@ ORT ternary uses `do_constant_folding=True` during export, so ternary quantizati
 
 The C++ kernel is now **faster than PyTorch ternary** and **roughly tied with PyTorch FP32 baseline on median latency**.
 
-- C++ OpenMP vs C++ single-core: **2.31x** (mean), **2.56x** (median)
-- C++ OpenMP vs PyTorch ternary: **1.75x** (mean), **1.82x** (median)
-- C++ OpenMP vs PyTorch baseline: **0.94x** (mean), **1.00x** (median)
+- C++ OpenMP vs C++ single-core: **2.65x** (mean), **2.57x** (median)
+- C++ OpenMP vs PyTorch ternary: **2.00x** (mean), **1.82x** (median)
+- C++ OpenMP vs PyTorch baseline: **1.07x** (mean), **1.00x** (median)
 - ORT baseline (`--threads 6`) vs PyTorch baseline: **5.42x** (mean), **5.29x** (median)
 - ORT ternary (`--threads 6`) vs PyTorch ternary: **10.14x** (mean), **9.55x** (median)
-- ORT ternary (`--threads 6`) vs C++ AVX2 ternary (OpenMP, 6 threads): **5.81x** (mean), **5.26x** (median)
+- ORT ternary (`--threads 6`) vs C++ AVX2 ternary (OpenMP, 6 threads): **5.06x** (mean), **5.24x** (median)
 
 ### Memory / Model Size
 

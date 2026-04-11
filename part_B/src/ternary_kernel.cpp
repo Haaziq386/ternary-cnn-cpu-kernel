@@ -194,9 +194,6 @@ namespace ternary
         const __m256 sign_mask = _mm256_set1_ps(-0.0f);
 
         int i = 0;
-#if defined(__GNUC__)
-#pragma GCC unroll 4
-#endif
         for (; i < packed_bytes; ++i)
         {
             __m256 x0 = _mm256_loadu_ps(act0 + i * 8);

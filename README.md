@@ -43,7 +43,7 @@ sudo taskset -c 0-5 nice -n -20 env OMP_NUM_THREADS=6 \
 # Part C — benchmark PyTorch and compare (latest C++ OpenMP best example)
 cd ../part_C
 python benchmark_pytorch.py \
-  --cpp-mean-us 1664.27 --cpp-median-us 1693.19 --cpp-p99-us 2558.51 \
+  --cpp-mean-us 1611.4 --cpp-median-us 1597.7 --cpp-p99-us 2328.5 \
   --iters 3000 --warmup 50
 
 # Part C — export ONNX models and benchmark ONNX Runtime (FP32)
@@ -127,7 +127,7 @@ OK: 16/16 top-1 matches, max probability diff = 0.000003
 
 ## Part C — Benchmark Results
 
-README shows the best controlled single-core C++ result. Full benchmark history is in [RESULTS.md](RESULTS.md).
+README shows the best controlled multi-core C++ result. Full benchmark history is in [RESULTS.md](RESULTS.md).
 
 Controlled C++ methods:
 
@@ -201,13 +201,13 @@ PyTorch dispatches `conv2d` on CPU to **oneDNN** (Intel's Deep Neural Network Li
 The C++ kernel uses (M,N) cache blocking, a 4-wide ternary dot product, and aggressive OpenMP parallelism. The table above reports the **best multi-core OpenMP (6-thread)** result; the controlled single-core reference path is tracked in the optimization history below.
 
 Single-core structure:
-- Spatial tile (M): 64 elements
+- Spatial tile (M): 32 elements (autotuned)
 - Output channel group (N): 4 channels per dot-product call (`dot_product_ternary_4x_avx2`)
 - Activation row loaded **once** and applied to 4 output channels simultaneously → 4× fewer L2 reads
 
 OpenMP multi-core structure:
 - `collapse(2)` over `(oc_group × spatial_tile)` work items → **one barrier per layer** instead of one per spatial tile
-- For 32×32 output with 16 spatial tiles: reduces from 16 barriers to 1 per ternary layer
+- For 32×32 output with 32 spatial tiles: reduces from 32 barriers to 1 per ternary layer
 
 Optimization history (single-core median, controlled runs):
 
@@ -221,6 +221,14 @@ Optimization history (single-core median, controlled runs):
 | **Total** | **4344.98** | **28.3%** (vs baseline) |
 
 Full run history and failed experiments are in [RESULTS.md](RESULTS.md).
+
+Dynamic INT8 comparison note (same pinned policy):
+- `benchmark_int8_vs_cpp.py` compares C++ ternary against **ONNX Runtime dynamic INT8** in both multi-core and single-core modes.
+- Latest run (`results_int8_vs_cpp.json`):
+  - Multi-core (0-5, 6 threads): C++ **1938.00 / 1802.73 / 3229.75 us** (mean/median/p99), ORT baseline INT8 **2052.76 / 1879.66 / 3421.90 us**, ORT ternary INT8 **1661.21 / 1586.97 / 2813.80 us**.
+  - Single-core (0): C++ **4448.19 / 4270.72 / 7221.33 us**, ORT baseline INT8 **3544.37 / 3447.45 / 5151.37 us**, ORT ternary INT8 **2107.36 / 2063.26 / 3264.19 us**.
+- Interpretation: C++ beats ORT baseline dynamic INT8 in multi-core, but ORT ternary dynamic INT8 remains faster; in single-core, ORT dynamic INT8 is faster.
+- FP32 ONNX values from `benchmark_onnx.py` are a different baseline and should not be mixed with INT8 conclusions.
 
 Further gains would require INT8 quantisation to use AVX-VNNI `vpdpbusd` (4× throughput) or a fused streaming im2col to keep activation data in L1 rather than L2.
 

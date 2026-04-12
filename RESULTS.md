@@ -712,3 +712,38 @@ Comparison vs prior best (section V, kST=64 + static):
 | median (µs) | 1693.2 | 1597.7 | **−5.6%** |
 | p99 (µs) | 2558.5 | 2328.5 | **−9.0%** |
 
+---
+
+## Y) ONNX dynamic INT8 vs C++ ternary (fair pinned comparison)
+
+Goal: compare current C++ ternary against ONNX Runtime dynamic INT8 under the same core pinning policy and iteration counts, without retraining.
+
+### Command
+
+Run from `part_C`:
+
+```bash
+"$(which python)" benchmark_int8_vs_cpp.py \
+  --skip-export --multi-cores 0-5 --single-core 0 --threads 6 \
+  --iters 3000 --warmup 50 --use-sudo --nice -20
+```
+
+Important:
+1. Do **not** wrap the whole script invocation with outer `sudo` when using `--use-sudo`.
+2. `benchmark_onnx.py` reports FP32 ONNX latency; do not compare those numbers as if they were INT8.
+
+### Representative run
+
+| Policy | Implementation | mean (us) | median (us) | p99 (us) |
+|---|---|---:|---:|---:|
+| Multi-core (`0-5`, threads=6) | C++ ternary | 1938.00 | 1802.73 | 3229.75 |
+| Multi-core (`0-5`, threads=6) | ORT baseline dynamic INT8 | 2217.95 | 2083.35 | 3680.00 |
+| Multi-core (`0-5`, threads=6) | ORT ternary dynamic INT8 | 1634.24 | 1576.95 | 2844.85 |
+| Single-core (`0`, threads=1) | C++ ternary | 4559.11 | 4268.36 | 8527.33 |
+| Single-core (`0`, threads=1) | ORT baseline dynamic INT8 | 3816.15 | 3587.26 | 6418.56 |
+| Single-core (`0`, threads=1) | ORT ternary dynamic INT8 | 2334.02 | 2104.92 | 4678.74 |
+
+### Interpretation
+
+In this dynamic INT8 setup, ORT remains faster than current C++ ternary for both multi-core and single-core pinned runs. This does not conflict with the FP32 ONNX results from section R, which are a different model format/path.
+

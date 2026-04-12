@@ -2,57 +2,57 @@
   "latency_us": {
     "multi_core": {
       "cpp_ternary": {
-        "mean_us": 2855.05,
-        "median_us": 2800.04,
-        "p99_us": 6129.51
+        "mean_us": 1938.0,
+        "median_us": 1802.73,
+        "p99_us": 3229.75
       },
       "ort_baseline_dynamic_int8": {
-        "mean_us": 2217.95,
-        "median_us": 2083.35,
-        "p99_us": 3680.0,
-        "min_us": 1657.04,
-        "max_us": 7039.34
+        "mean_us": 2052.76,
+        "median_us": 1879.66,
+        "p99_us": 3421.9,
+        "min_us": 1726.87,
+        "max_us": 14478.03
       },
       "ort_ternary_dynamic_int8": {
-        "mean_us": 1634.24,
-        "median_us": 1576.95,
-        "p99_us": 2844.85,
-        "min_us": 1251.65,
-        "max_us": 4753.99
+        "mean_us": 1661.21,
+        "median_us": 1586.97,
+        "p99_us": 2813.8,
+        "min_us": 1295.32,
+        "max_us": 6855.6
       }
     },
     "single_core": {
       "cpp_ternary": {
-        "mean_us": 4559.11,
-        "median_us": 4268.36,
-        "p99_us": 8527.33
+        "mean_us": 4448.19,
+        "median_us": 4270.72,
+        "p99_us": 7221.33
       },
       "ort_baseline_dynamic_int8": {
-        "mean_us": 3816.15,
-        "median_us": 3587.26,
-        "p99_us": 6418.56,
-        "min_us": 3027.26,
-        "max_us": 12620.94
+        "mean_us": 3544.37,
+        "median_us": 3447.45,
+        "p99_us": 5151.37,
+        "min_us": 3119.74,
+        "max_us": 10477.24
       },
       "ort_ternary_dynamic_int8": {
-        "mean_us": 2334.02,
-        "median_us": 2104.92,
-        "p99_us": 4678.74,
-        "min_us": 1806.92,
-        "max_us": 7886.65
+        "mean_us": 2107.36,
+        "median_us": 2063.26,
+        "p99_us": 3264.19,
+        "min_us": 1897.3,
+        "max_us": 6510.07
       }
     }
   },
   "speedup": {
     "multi_core_ort_ternary_int8_vs_cpp_ternary": {
-      "mean_x": 0.57,
-      "median_x": 0.56,
-      "p99_x": 0.46
+      "mean_x": 0.86,
+      "median_x": 0.88,
+      "p99_x": 0.87
     },
     "single_core_ort_ternary_int8_vs_cpp_ternary": {
-      "mean_x": 0.51,
-      "median_x": 0.49,
-      "p99_x": 0.55
+      "mean_x": 0.47,
+      "median_x": 0.48,
+      "p99_x": 0.45
     }
   },
   "model_sizes_kb": {
@@ -78,7 +78,7 @@
     "cpp_nice": -20
   },
   "raw_outputs": {
-    "cpp_multi": "mean_us=2855.05 median_us=2800.04 p99_us=6129.51\n",
-    "cpp_single": "mean_us=4559.11 median_us=4268.36 p99_us=8527.33\n"
+    "cpp_multi": "mean_us=1938.00 median_us=1802.73 p99_us=3229.75\n",
+    "cpp_single": "mean_us=4448.19 median_us=4270.72 p99_us=7221.33\n"
   }
 }

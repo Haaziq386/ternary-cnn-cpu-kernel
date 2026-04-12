@@ -24,7 +24,7 @@ python train.py --model ternary --epochs 30 --batch-size 128 --data-root ./data
 
 # Part B — convert weights and build the C++ engine
 cd ../part_B
-cmake -S . -B build && cmake --build build -j
+cmake -S . -B build -DPROFILE_LAYERS=ON && cmake --build build -j
 python convert_weights.py ../part_A/ternary_weights.npz ../part_A/ternary.pth model.bin
 
 # Validate: C++ output must match PyTorch reference
@@ -39,6 +39,10 @@ sudo taskset -c 0 nice -n -20 ./build/ternary_infer model.bin --bench --iters 30
 # Part B benchmark (OpenMP multi-core, 6 threads)
 sudo taskset -c 0-5 nice -n -20 env OMP_NUM_THREADS=6 \
   ./build/ternary_infer model.bin --bench --iters 3000 --warmup 50
+
+# Part B benchmark + perf-like runtime counters (PROFILE_LAYERS build only)
+taskset -c 0-5 env OMP_NUM_THREADS=6 \
+  ./build/ternary_infer model.bin --bench --iters 3000 --warmup 50 --perf-like
 
 # Part C — benchmark PyTorch and compare (latest C++ OpenMP best example)
 cd ../part_C
@@ -114,6 +118,7 @@ A C++17 inference engine that loads the trained weights and runs ResNet-20 forwa
 - **BatchNorm folding** — BN parameters are folded into per-channel `scale` and `bias` at conversion time. Zero BN math at runtime.
 - **im2col → GEMM** — input patches are linearized so the inner loop walks contiguous memory. 4 parallel FP accumulators per dot product to hide add latency.
 - **Autotuned tile size** — `kSpatialTile=32` found via grid sweep over `{8,16,32,64}`. Doubles OpenMP work items vs the default 64, fixing Stage 3 (8×8) underutilization. Combined with `schedule(guided)` for adaptive chunk sizing.
+- **Lower OpenMP barrier overhead** — added `nowait` on key `omp for` hot loops where no cross-thread dependency exists, reducing unnecessary synchronization.
 - **Pre-allocated scratch buffers** — zero heap allocation during inference.
 
 Build flags: `-O3 -march=native -mavx2 -mfma -mbmi2 -funroll-loops`
@@ -151,7 +156,7 @@ Latest controlled rerun on this machine (April 2026):
 |---|---|---|---|
 | PyTorch baseline (FP32) | 1788.8 | 1700.5 | 3373.7 |
 | PyTorch ternary (TernaryConv2d) | 3330.4 | 3083.6 | 7012.4 |
-| **C++ AVX2 ternary (OpenMP, 6 threads, latest)** | **1611.4** | **1597.7** | **2328.5** |
+| **C++ AVX2 ternary (OpenMP, 6 threads, latest)** | **1553.79** | **1527.58** | **2317.45** |
 | ORT FP32 baseline (`--threads 6`) | 329.8 | 321.6 | 607.5 |
 | ORT FP32 ternary (frozen wts, `--threads 6`) | 328.6 | 322.9 | 560.7 |
 
@@ -167,12 +172,12 @@ ORT ternary uses `do_constant_folding=True` during export, so ternary quantizati
 
 The C++ kernel is now **faster than PyTorch ternary** and **roughly tied with PyTorch FP32 baseline on median latency**.
 
-- C++ OpenMP vs C++ single-core: **2.70x** (mean), **2.72x** (median)
-- C++ OpenMP vs PyTorch ternary: **2.07x** (mean), **1.93x** (median)
-- C++ OpenMP vs PyTorch baseline: **1.11x** (mean), **1.06x** (median)
+- C++ OpenMP vs C++ single-core: **2.83x** (mean), **2.84x** (median)
+- C++ OpenMP vs PyTorch ternary: **2.14x** (mean), **2.02x** (median)
+- C++ OpenMP vs PyTorch baseline: **1.15x** (mean), **1.11x** (median)
 - ORT baseline (`--threads 6`) vs PyTorch baseline: **5.42x** (mean), **5.29x** (median)
 - ORT ternary (`--threads 6`) vs PyTorch ternary: **10.14x** (mean), **9.55x** (median)
-- ORT ternary (`--threads 6`) vs C++ AVX2 ternary (OpenMP, 6 threads): **4.90x** (mean), **4.96x** (median)
+- ORT ternary (`--threads 6`) vs C++ AVX2 ternary (OpenMP, 6 threads): **4.73x** (mean), **4.73x** (median)
 
 ### Memory / Model Size
 

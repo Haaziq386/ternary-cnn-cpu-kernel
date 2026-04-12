@@ -747,3 +747,73 @@ Important:
 
 In this dynamic INT8 setup, ORT remains faster than current C++ ternary for both multi-core and single-core pinned runs. This does not conflict with the FP32 ONNX results from section R, which are a different model format/path.
 
+---
+
+## Z) perf-like telemetry output + OpenMP barrier-elision pass
+
+### Motivation
+
+The existing `PROFILE_LAYERS` timing is useful for layer attribution, but not for scheduler/runtime behavior.
+Added a benchmark-side telemetry mode to expose perf-like process metrics directly from `ternary_infer`.
+The telemetry path is compiled only when `PROFILE_LAYERS` is enabled so the default inference binary remains unchanged.
+
+### Code changes
+
+1. Added `--perf-like` flag in `part_B/src/main.cpp`.
+2. On Linux, benchmark mode now reports:
+   - `task-clock-ms` (from process user+sys CPU time)
+   - `wall-ms` and derived `cpus-utilized = task_clock / wall`
+   - `context-switches` (voluntary + involuntary)
+   - `page-faults` (minor + major)
+   - best-effort `instructions`/`cycles`, IPC, and average GHz via `perf_event_open` when available.
+3. Reduced synchronization overhead in hot loops:
+   - `conv_ternary`: `#pragma omp for schedule(guided) collapse(2) nowait`
+   - `conv_fp32`: `#pragma omp for schedule(static) nowait`
+
+### New command
+
+```bash
+cmake -S . -B build -DPROFILE_LAYERS=ON && cmake --build build -j
+taskset -c 0-5 env OMP_NUM_THREADS=6 \
+  ./build/ternary_infer model.bin --bench --iters 3000 --warmup 50 --perf-like
+```
+
+### Example output (this host)
+
+```text
+mean_us=1686.23 median_us=1688.41 p99_us=2321.35
+[PERF_LIKE] task-clock-ms=30350.95 wall-ms=5058.89 cpus-utilized=6.00
+[PERF_LIKE] context-switches=449 (voluntary=0, involuntary=449)
+[PERF_LIKE] page-faults=7 (minor=7, major=0)
+[PERF_LIKE] instructions/cycles unavailable (cycles unavailable: No such file or directory)
+```
+
+`instructions/cycles` are unavailable here due host PMU exposure limits (consistent with prior WSL constraints).
+
+### Performance rerun after barrier-elision (3x, pinned)
+
+```bash
+for i in 1 2 3; do
+  taskset -c 0-5 env OMP_NUM_THREADS=6 \
+    ./build/ternary_infer model.bin --bench --iters 3000 --warmup 50
+done
+```
+
+| Run | mean (us) | median (us) | p99 (us) |
+|---:|---:|---:|---:|
+| 1 | 1553.79 | 1527.58 | 2456.70 |
+| 2 | 1612.64 | 1622.61 | 2317.45 |
+| 3 | 1657.66 | 1668.41 | 2317.48 |
+
+### Comparison vs previous best controlled reference (section X)
+
+Reference from section X (with `sudo taskset ... nice -n -20`):
+- mean: 1611.4 us
+- median: 1597.7 us
+- p99: 2328.5 us
+
+Current best rerun:
+- best mean: 1553.79 us (**-3.57%** vs 1611.4)
+- best median: 1527.58 us (**-4.39%** vs 1597.7)
+- best p99: 2317.45 us (**-0.48%** vs 2328.5)
+

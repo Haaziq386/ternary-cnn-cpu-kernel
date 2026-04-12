@@ -9,16 +9,18 @@
 
 #ifdef PROFILE_LAYERS
 #include <chrono>
-namespace ternary {
-TernaryConvBreakdown g_ternary_breakdown;
-}
-namespace {
-using Clock = std::chrono::steady_clock;
-using us_t  = std::chrono::microseconds;
-inline long long layer_elapsed_us(Clock::time_point t0, Clock::time_point t1)
+namespace ternary
 {
-    return std::chrono::duration_cast<us_t>(t1 - t0).count();
+    TernaryConvBreakdown g_ternary_breakdown;
 }
+namespace
+{
+    using Clock = std::chrono::steady_clock;
+    using us_t = std::chrono::microseconds;
+    inline long long layer_elapsed_us(Clock::time_point t0, Clock::time_point t1)
+    {
+        return std::chrono::duration_cast<us_t>(t1 - t0).count();
+    }
 } // anonymous namespace
 #endif
 
@@ -27,7 +29,7 @@ namespace ternary
     namespace
     {
 
-        constexpr int kSpatialTile = 32;  // autotuned: beats 64 by ~20% (better OMP balance for all 3 stages)
+        constexpr int kSpatialTile = 32; // autotuned: beats 64 by ~20% (better OMP balance for all 3 stages)
         constexpr int kChannelTile = 32; // Tile output channels for L2 cache blocking
 
         inline int round_up(int value, int multiple)
@@ -116,7 +118,7 @@ namespace ternary
                 for (int spatial_base = 0; spatial_base < output_spatial; spatial_base += kSpatialTile)
                 {
                     const int spatial_end = std::min(spatial_base + kSpatialTile, output_spatial);
-#pragma omp for schedule(static)
+#pragma omp for schedule(static) nowait
                     for (int oc_base = 0; oc_base < weights.out_channels; oc_base += kChannelTile)
                     {
                         const int oc_end = std::min(oc_base + kChannelTile, weights.out_channels);
@@ -185,7 +187,7 @@ namespace ternary
                 // Each item processes 4 output channels for one spatial tile — 1 activation load
                 // feeds all 4 channels (4× fewer activation reads vs single-channel loop).
                 // One barrier at the end instead of one per spatial tile.
-#pragma omp for schedule(guided) collapse(2)
+#pragma omp for schedule(guided) collapse(2) nowait
                 for (int oc_grp = 0; oc_grp < oc4_count; ++oc_grp)
                 {
                     for (int stile = 0; stile < spatial_tiles; ++stile)

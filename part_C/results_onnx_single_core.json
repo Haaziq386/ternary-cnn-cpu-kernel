@@ -1,18 +1,18 @@
 {
   "latency": {
     "ort_baseline_fp32": {
-      "mean_us": 309.91,
-      "median_us": 298.46,
-      "p99_us": 555.91,
-      "min_us": 203.29,
-      "max_us": 963.59
+      "mean_us": 700.76,
+      "median_us": 678.95,
+      "p99_us": 1027.58,
+      "min_us": 589.28,
+      "max_us": 2440.26
     },
     "ort_ternary_fp32": {
-      "mean_us": 309.08,
-      "median_us": 290.23,
-      "p99_us": 564.94,
-      "min_us": 206.34,
-      "max_us": 14563.11
+      "mean_us": 719.25,
+      "median_us": 700.09,
+      "p99_us": 1143.64,
+      "min_us": 594.39,
+      "max_us": 3375.12
     }
   },
   "model_sizes": {
@@ -22,7 +22,7 @@
   "config": {
     "iters": 3000,
     "warmup": 50,
-    "intra_op_num_threads": 6,
+    "intra_op_num_threads": 1,
     "graph_optimization_level": "ORT_ENABLE_ALL",
     "execution_mode": "ORT_SEQUENTIAL",
     "provider": "CPUExecutionProvider"

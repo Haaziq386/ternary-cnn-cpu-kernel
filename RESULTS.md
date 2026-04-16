@@ -817,3 +817,83 @@ Current best rerun:
 - best median: 1527.58 us (**-4.39%** vs 1597.7)
 - best p99: 2317.45 us (**-0.48%** vs 2328.5)
 
+---
+
+## AA) ONNX static INT8 benchmark pass (`.venv`) + matched dynamic/FP32 refresh
+
+### Goal
+
+Add a static INT8 benchmark path analogous to `benchmark_int8_vs_cpp.py` and validate the hypothesis that static INT8 is faster than dynamic INT8 and FP32 on this host.
+
+### New script
+
+Added `part_C/benchmark_static_int8_vs_cpp.py`.
+
+Behavior:
+1. Reuses/exports FP32 ONNX models (`export_onnx.py`) unless `--skip-export` is set.
+2. Runs ONNX Runtime **static INT8** quantization (`quantize_static`, QDQ format, MinMax calibration).
+3. Uses calibration samples from `part_A/ternary_weights.npz` (`sample_input`, up to 16 samples by default).
+4. Benchmarks C++ ternary and ORT static INT8 under the same policy:
+   - multi-core pinned (`0-5`, `threads=6`)
+   - single-core pinned (`0`, `threads=1`)
+5. Saves report to `part_C/results_static_int8_vs_cpp.json`.
+
+### Commands used (inside project virtual env)
+
+```bash
+cd part_C
+
+# Static INT8 vs C++ (new)
+"$(which python)" benchmark_static_int8_vs_cpp.py \
+  --skip-export --multi-cores 0-5 --single-core 0 --threads 6 \
+  --iters 3000 --warmup 50 --nice -5
+
+# Dynamic INT8 vs C++ (matched policy refresh)
+"$(which python)" benchmark_int8_vs_cpp.py \
+  --skip-export --multi-cores 0-5 --single-core 0 --threads 6 \
+  --iters 3000 --warmup 50 --nice -5
+
+# FP32 ONNX refresh (multi-core + single-core)
+taskset -c 0-5 "$(which python)" benchmark_onnx.py --threads 6 --iters 3000 --warmup 50
+taskset -c 0 "$(which python)" benchmark_onnx.py --threads 1 --iters 3000 --warmup 50 --out results_onnx_single_core.json
+```
+
+### Results (3000 iters, warmup 50)
+
+#### Multi-core (`0-5`, threads=6)
+
+| Implementation | mean (us) | median (us) | p99 (us) |
+|---|---:|---:|---:|
+| C++ ternary (`benchmark_static_int8_vs_cpp.py`) | 1786.07 | 1782.85 | 2747.49 |
+| ORT baseline static INT8 | 250.43 | 237.23 | 503.99 |
+| ORT ternary static INT8 | 450.68 | 418.38 | 957.47 |
+| ORT baseline dynamic INT8 | 2013.82 | 1992.00 | 3113.35 |
+| ORT ternary dynamic INT8 | 1294.21 | 1282.21 | 1981.35 |
+| ORT baseline FP32 | 309.91 | 298.46 | 555.91 |
+| ORT ternary FP32 | 309.08 | 290.23 | 564.94 |
+
+#### Single-core (`0`, threads=1)
+
+| Implementation | mean (us) | median (us) | p99 (us) |
+|---|---:|---:|---:|
+| C++ ternary (`benchmark_static_int8_vs_cpp.py`) | 4653.74 | 4652.73 | 6338.38 |
+| ORT baseline static INT8 | 408.25 | 396.07 | 812.18 |
+| ORT ternary static INT8 | 439.36 | 420.49 | 829.28 |
+| ORT baseline dynamic INT8 | 3644.35 | 3563.22 | 5537.66 |
+| ORT ternary dynamic INT8 | 2102.85 | 2033.68 | 3055.82 |
+| ORT baseline FP32 | 700.76 | 678.95 | 1027.58 |
+| ORT ternary FP32 | 719.25 | 700.09 | 1143.64 |
+
+### Interpretation
+
+1. The hypothesis is confirmed for the baseline ONNX path: **static INT8 is faster than both dynamic INT8 and FP32** (multi-core and single-core).
+2. `ORT baseline static INT8` is the fastest ONNX path in this run.
+3. `ORT ternary static INT8` is much faster than `ORT ternary dynamic INT8`, but still slower than `ORT baseline static INT8`.
+4. Static QDQ artifacts are larger than FP32 ONNX in this setup:
+   - `baseline_fp32.onnx`: 84.3 KB
+   - `baseline_dynamic_int8.onnx`: 331.1 KB
+   - `baseline_static_int8.onnx`: 1185.3 KB
+   - `ternary_fp32.onnx`: 237.6 KB
+   - `ternary_dynamic_int8.onnx`: 1202.8 KB
+   - `ternary_static_int8.onnx`: 1323.4 KB
+

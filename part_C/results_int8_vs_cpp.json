@@ -2,57 +2,57 @@
   "latency_us": {
     "multi_core": {
       "cpp_ternary": {
-        "mean_us": 1938.0,
-        "median_us": 1802.73,
-        "p99_us": 3229.75
+        "mean_us": 1794.7,
+        "median_us": 1788.51,
+        "p99_us": 2778.65
       },
       "ort_baseline_dynamic_int8": {
-        "mean_us": 2052.76,
-        "median_us": 1879.66,
-        "p99_us": 3421.9,
-        "min_us": 1726.87,
-        "max_us": 14478.03
+        "mean_us": 2013.82,
+        "median_us": 1992.0,
+        "p99_us": 3113.35,
+        "min_us": 1239.49,
+        "max_us": 4608.73
       },
       "ort_ternary_dynamic_int8": {
-        "mean_us": 1661.21,
-        "median_us": 1586.97,
-        "p99_us": 2813.8,
-        "min_us": 1295.32,
-        "max_us": 6855.6
+        "mean_us": 1294.21,
+        "median_us": 1282.21,
+        "p99_us": 1981.35,
+        "min_us": 883.99,
+        "max_us": 4952.61
       }
     },
     "single_core": {
       "cpp_ternary": {
-        "mean_us": 4448.19,
-        "median_us": 4270.72,
-        "p99_us": 7221.33
+        "mean_us": 4498.38,
+        "median_us": 4469.25,
+        "p99_us": 6065.87
       },
       "ort_baseline_dynamic_int8": {
-        "mean_us": 3544.37,
-        "median_us": 3447.45,
-        "p99_us": 5151.37,
-        "min_us": 3119.74,
-        "max_us": 10477.24
+        "mean_us": 3644.35,
+        "median_us": 3563.22,
+        "p99_us": 5537.66,
+        "min_us": 2940.75,
+        "max_us": 8317.02
       },
       "ort_ternary_dynamic_int8": {
-        "mean_us": 2107.36,
-        "median_us": 2063.26,
-        "p99_us": 3264.19,
-        "min_us": 1897.3,
-        "max_us": 6510.07
+        "mean_us": 2102.85,
+        "median_us": 2033.68,
+        "p99_us": 3055.82,
+        "min_us": 1759.09,
+        "max_us": 4193.96
       }
     }
   },
   "speedup": {
     "multi_core_ort_ternary_int8_vs_cpp_ternary": {
-      "mean_x": 0.86,
-      "median_x": 0.88,
-      "p99_x": 0.87
+      "mean_x": 0.72,
+      "median_x": 0.72,
+      "p99_x": 0.71
     },
     "single_core_ort_ternary_int8_vs_cpp_ternary": {
       "mean_x": 0.47,
-      "median_x": 0.48,
-      "p99_x": 0.45
+      "median_x": 0.46,
+      "p99_x": 0.5
     }
   },
   "model_sizes_kb": {
@@ -74,11 +74,11 @@
       "MatMul",
       "Gemm"
     ],
-    "cpp_use_sudo": true,
-    "cpp_nice": -20
+    "cpp_use_sudo": false,
+    "cpp_nice": -5
   },
   "raw_outputs": {
-    "cpp_multi": "mean_us=1938.00 median_us=1802.73 p99_us=3229.75\n",
-    "cpp_single": "mean_us=4448.19 median_us=4270.72 p99_us=7221.33\n"
+    "cpp_multi": "nice: cannot set niceness: Permission denied\nmean_us=1794.70 median_us=1788.51 p99_us=2778.65\n",
+    "cpp_single": "nice: cannot set niceness: Permission denied\nmean_us=4498.38 median_us=4469.25 p99_us=6065.87\n"
   }
 }

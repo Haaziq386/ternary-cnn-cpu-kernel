@@ -64,6 +64,12 @@ sudo nice -n -20 "$(which python)" benchmark_onnx.py --threads 6 --iters 3000 --
   --skip-export --multi-cores 0-5 --single-core 0 --threads 6 \
   --iters 3000 --warmup 50 --use-sudo --nice -20
 
+# Part C — compare C++ ternary vs ONNX static INT8 (single + multi-core in one run)
+# Run inside the project virtual env (.venv):
+"$(which python)" benchmark_static_int8_vs_cpp.py \
+  --skip-export --multi-cores 0-5 --single-core 0 --threads 6 \
+  --iters 3000 --warmup 50 --nice -5
+
 # Part C comparison (controlled single-core)
 cd ../part_C
 sudo taskset -c 0 nice -n -20 env \
@@ -230,10 +236,20 @@ Full run history and failed experiments are in [RESULTS.md](RESULTS.md).
 Dynamic INT8 comparison note (same pinned policy):
 - `benchmark_int8_vs_cpp.py` compares C++ ternary against **ONNX Runtime dynamic INT8** in both multi-core and single-core modes.
 - Latest run (`results_int8_vs_cpp.json`):
-  - Multi-core (0-5, 6 threads): C++ **1938.00 / 1802.73 / 3229.75 us** (mean/median/p99), ORT baseline INT8 **2052.76 / 1879.66 / 3421.90 us**, ORT ternary INT8 **1661.21 / 1586.97 / 2813.80 us**.
-  - Single-core (0): C++ **4448.19 / 4270.72 / 7221.33 us**, ORT baseline INT8 **3544.37 / 3447.45 / 5151.37 us**, ORT ternary INT8 **2107.36 / 2063.26 / 3264.19 us**.
+  - Multi-core (0-5, 6 threads): C++ **1794.70 / 1788.51 / 2778.65 us** (mean/median/p99), ORT baseline INT8 **2013.82 / 1992.00 / 3113.35 us**, ORT ternary INT8 **1294.21 / 1282.21 / 1981.35 us**.
+  - Single-core (0): C++ **4498.38 / 4469.25 / 6065.87 us**, ORT baseline INT8 **3644.35 / 3563.22 / 5537.66 us**, ORT ternary INT8 **2102.85 / 2033.68 / 3055.82 us**.
 - Interpretation: C++ beats ORT baseline dynamic INT8 in multi-core, but ORT ternary dynamic INT8 remains faster; in single-core, ORT dynamic INT8 is faster.
 - FP32 ONNX values from `benchmark_onnx.py` are a different baseline and should not be mixed with INT8 conclusions.
+
+Static INT8 comparison note:
+- `benchmark_static_int8_vs_cpp.py` compares C++ ternary against **ONNX Runtime static INT8 (QDQ, MinMax calibration with 16 samples from `sample_input`)**.
+- Latest run (`results_static_int8_vs_cpp.json`):
+  - Multi-core (0-5, 6 threads): C++ **1786.07 / 1782.85 / 2747.49 us**, ORT baseline static INT8 **250.43 / 237.23 / 503.99 us**, ORT ternary static INT8 **450.68 / 418.38 / 957.47 us**.
+  - Single-core (0): C++ **4653.74 / 4652.73 / 6338.38 us**, ORT baseline static INT8 **408.25 / 396.07 / 812.18 us**, ORT ternary static INT8 **439.36 / 420.49 / 829.28 us**.
+- Matched FP32 ONNX reference from `.venv` (`results_onnx.json`, 6 threads pinned to cores 0-5):
+  - ORT baseline FP32 **309.91 / 298.46 / 555.91 us**
+  - ORT ternary FP32 **309.08 / 290.23 / 564.94 us**
+- Interpretation: on this machine and policy, **static INT8 baseline is faster than both dynamic INT8 and FP32**. Static INT8 ternary is much faster than dynamic INT8 ternary, but still slower than static INT8 baseline.
 
 Further gains would require INT8 quantisation to use AVX-VNNI `vpdpbusd` (4× throughput) or a fused streaming im2col to keep activation data in L1 rather than L2.
 

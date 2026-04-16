@@ -1,0 +1,86 @@
+{
+  "latency_us": {
+    "multi_core": {
+      "cpp_ternary": {
+        "mean_us": 2546.35,
+        "median_us": 2521.69,
+        "p99_us": 4329.21
+      },
+      "ort_baseline_static_int8": {
+        "mean_us": 513.36,
+        "median_us": 463.91,
+        "p99_us": 1210.31,
+        "min_us": 295.46,
+        "max_us": 2776.71
+      },
+      "ort_ternary_static_int8": {
+        "mean_us": 859.53,
+        "median_us": 729.97,
+        "p99_us": 2593.32,
+        "min_us": 475.47,
+        "max_us": 11210.62
+      }
+    },
+    "single_core": {
+      "cpp_ternary": {
+        "mean_us": 4695.26,
+        "median_us": 4378.93,
+        "p99_us": 8888.77
+      },
+      "ort_baseline_static_int8": {
+        "mean_us": 622.6,
+        "median_us": 546.46,
+        "p99_us": 1974.58,
+        "min_us": 359.36,
+        "max_us": 8635.87
+      },
+      "ort_ternary_static_int8": {
+        "mean_us": 738.61,
+        "median_us": 682.52,
+        "p99_us": 1934.48,
+        "min_us": 431.74,
+        "max_us": 8100.93
+      }
+    }
+  },
+  "speedup": {
+    "multi_core_ort_ternary_static_int8_vs_cpp_ternary": {
+      "mean_x": 0.34,
+      "median_x": 0.29,
+      "p99_x": 0.6
+    },
+    "single_core_ort_ternary_static_int8_vs_cpp_ternary": {
+      "mean_x": 0.16,
+      "median_x": 0.16,
+      "p99_x": 0.22
+    }
+  },
+  "model_sizes_kb": {
+    "model_bin_kb": 280.1,
+    "baseline_fp32_onnx_kb": 84.3,
+    "ternary_fp32_onnx_kb": 237.6,
+    "baseline_static_int8_onnx_kb": 1185.3,
+    "ternary_static_int8_onnx_kb": 1323.4
+  },
+  "config": {
+    "iters": 3000,
+    "warmup": 50,
+    "multi_cores": "0-5",
+    "single_core": 0,
+    "threads": 6,
+    "calib_samples": 16,
+    "quantization": "static_int8_qdq",
+    "calibration_method": "minmax",
+    "op_types_to_quantize": [
+      "Conv",
+      "MatMul",
+      "Gemm"
+    ],
+    "cpp_use_sudo": false,
+    "cpp_nice": -20
+  },
+  "raw_outputs": {
+    "cpp_multi": "mean_us=2546.35 median_us=2521.69 p99_us=4329.21\n",
+    "cpp_single": "mean_us=4695.26 median_us=4378.93 p99_us=8888.77\n"
+  }
+}

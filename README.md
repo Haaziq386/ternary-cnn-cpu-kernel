@@ -25,10 +25,14 @@ python train.py --model ternary --epochs 30 --batch-size 128 --data-root ./data
 # Part B — convert weights and build the C++ engine
 cd ../part_B
 cmake -S . -B build -DPROFILE_LAYERS=ON && cmake --build build -j
-python convert_weights.py ../part_A/ternary_weights.npz ../part_A/ternary.pth model.bin
+python convert_weights.py ../part_A/ternary_weights.npz ../part_A/ternary.pth model.bin \
+  --sample-input-bin ../part_A/sample_input.bin \
+  --sample-output-bin ../part_A/sample_output.bin
 
 # Validate: C++ output must match PyTorch reference
-./build/ternary_infer model.bin --validate
+./build/ternary_infer model.bin --validate \
+  --sample-input ../part_A/sample_input.bin \
+  --expected-output ../part_A/sample_output.bin
 
 # Benchmark: single-image latency
 ./build/ternary_infer model.bin --bench --iters 1000 --warmup 10
@@ -191,12 +195,14 @@ The C++ kernel is now **faster than PyTorch ternary** and **roughly tied with Py
 |---|---|
 | `baseline.pth` (FP32 weights) | 1111.9 KB |
 | `ternary.pth` (FP32 storage, ternary values) | 1111.3 KB |
-| `model.bin` (packed ternary, 2 bits/weight) | 280.1 KB |
+| `model.bin` (packed ternary, 2 bits/weight; no embedded validation tensors) | 88.0 KB |
+| `sample_input.bin` (validation input, float32 NCHW) | 192.0 KB |
+| `sample_output.bin` (validation expected output, float32 NxC) | 0.6 KB |
 | `baseline_fp32.onnx` | 84.3 KB |
 | `ternary_fp32.onnx` | 237.6 KB |
 | `python` peak RSS during benchmark | 3900.0 MB |
 
-`model.bin` is **4× smaller** than `ternary.pth` — the ternary packing (dual bitmaps + folded BN) compresses conv weights from 32 bits/weight to 2 bits/weight.
+`model.bin` is **~12.6× smaller** than `ternary.pth` — ternary packing (dual bitmaps + folded BN) compresses conv weights from 32 bits/weight to 2 bits/weight and no longer stores validation samples in the model artifact.
 
 ONNX export also improves artifact size vs `.pth` checkpoints:
 - `baseline_fp32.onnx` is **13.19x smaller** than `baseline.pth` (**92.4% smaller**).
@@ -253,7 +259,7 @@ Static INT8 comparison note:
 
 Further gains would require INT8 quantisation to use AVX-VNNI `vpdpbusd` (4× throughput) or a fused streaming im2col to keep activation data in L1 rather than L2.
 
-The **memory story is strong**: 4× smaller model file with the same accuracy, zero floating-point multiplies in the hot path, and reduced memory bandwidth — the structural efficiency of ternary is real even if single-threaded latency doesn't match production libraries.
+The **memory story is strong**: ~12.6× smaller deploy-time model file with the same accuracy, zero floating-point multiplies in the hot path, and reduced memory bandwidth — the structural efficiency of ternary is real even if single-threaded latency doesn't match production libraries.
 
 ---
 
@@ -281,5 +287,5 @@ C++ build requires CMake 3.16+ and a GCC/Clang with AVX2 support.
 
 - CIFAR-10 is downloaded automatically by torchvision on first run.
 - `conv1` (stem) and projection shortcuts in residual blocks stay full-precision; only the 18 residual 3×3 convs are ternary.
-- Part B correctness is verified by comparing C++ softmax outputs against the 16-sample reference batch exported from PyTorch in Part A (max diff = 3e-6).
+- Part B correctness is verified by comparing C++ softmax outputs against the 16-sample reference batch exported from PyTorch in Part A (`sample_input.bin` + `sample_output.bin`, max diff = 3e-6).
 - Model trained for 30 epochs on google collab (reduced from 200 for time constraints). Full 200-epoch training would yield ~92% baseline / ~91% ternary per published ResNet-20 results. Kernel correctness and benchmarking are independent of training duration.

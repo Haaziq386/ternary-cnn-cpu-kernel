@@ -310,9 +310,15 @@ Model-size efficiency from ONNX export:
 |---|---:|
 | baseline.pth | 1111.9 KB |
 | ternary.pth | 1111.3 KB |
+| model.bin (packed ternary, no embedded validation tensors) | 88.0 KB |
+| sample_input.bin (validation input, external) | 192.0 KB |
+| sample_output.bin (validation expected output, external) | 0.6 KB |
 | baseline_fp32.onnx | 84.3 KB |
 | ternary_fp32.onnx | 237.6 KB |
-| model.bin (packed ternary) | 280.1 KB |
+
+Notes:
+- `model.bin` is now slimmed to weights/metadata only; validation tensors are stored separately.
+- Combined size of `model.bin` + validation bins is ~280.6 KB, but deploy-time inference only needs `model.bin`.
 
 - `baseline_fp32.onnx` is **13.19x smaller** than `baseline.pth` (**92.4% smaller**).
 - `ternary_fp32.onnx` is **4.68x smaller** than `ternary.pth` (**78.6% smaller**).

@@ -265,7 +265,7 @@ def build_model(model: torch.nn.Module, sample_input: torch.Tensor, npz: dict[st
         ("layer3.2", False),
     ]
 
-    sample_count, input_channels, input_h, input_w = sample_input.shape
+    _, input_channels, input_h, input_w = sample_input.shape
     num_classes = model.fc.out_features
     layer_count = 1 + 2 * len(ordered_blocks) + sum(1 for _, has_proj in ordered_blocks if has_proj) + 1
 
@@ -273,7 +273,7 @@ def build_model(model: torch.nn.Module, sample_input: torch.Tensor, npz: dict[st
         "<8s12I",
         b"TRNCNNB1",
         1,
-        sample_count,
+        0,
         input_channels,
         input_h,
         input_w,
@@ -308,11 +308,14 @@ def build_model(model: torch.nn.Module, sample_input: torch.Tensor, npz: dict[st
 
         write_linear(out, "fc", model.fc, shapes["fc"])
 
-        out.write(sample_input.detach().cpu().numpy().astype(np.float32).tobytes(order="C"))
-        labels = np.asarray(npz["sample_labels"] if npz is not None and "sample_labels" in npz else np.zeros(sample_count, dtype=np.int64), dtype=np.int64)
-        out.write(labels.tobytes(order="C"))
-        sample_outputs = np.asarray(npz["sample_outputs"] if npz is not None and "sample_outputs" in npz else np.zeros((sample_count, num_classes), dtype=np.float32), dtype=np.float32)
-        out.write(sample_outputs.astype(np.float32).tobytes(order="C"))
+
+def export_validation_tensors(npz: dict[str, np.ndarray], sample_input_bin: Path, sample_output_bin: Path) -> None:
+    sample_input = np.asarray(npz["sample_input"], dtype=np.float32)
+    sample_output = np.asarray(npz["sample_outputs"], dtype=np.float32)
+    sample_input_bin.parent.mkdir(parents=True, exist_ok=True)
+    sample_output_bin.parent.mkdir(parents=True, exist_ok=True)
+    sample_input_bin.write_bytes(sample_input.tobytes(order="C"))
+    sample_output_bin.write_bytes(sample_output.tobytes(order="C"))
 
 
 def main() -> None:
@@ -320,6 +323,8 @@ def main() -> None:
     parser.add_argument("npz_path", type=Path, help="Path to ternary_weights.npz")
     parser.add_argument("pth_path", type=Path, help="Path to ternary.pth")
     parser.add_argument("out_path", type=Path, help="Output model.bin path")
+    parser.add_argument("--sample-input-bin", type=Path, default=None, help="Optional output path for raw float32 NCHW sample input")
+    parser.add_argument("--sample-output-bin", type=Path, default=None, help="Optional output path for raw float32 NxC expected probabilities")
     args = parser.parse_args()
 
     npz = load_npz(args.npz_path) if args.npz_path.exists() else None
@@ -334,6 +339,12 @@ def main() -> None:
 
     sample_input = torch.from_numpy(np.asarray(npz["sample_input"], dtype=np.float32))
     build_model(model, sample_input, npz, args.out_path)
+    if args.sample_input_bin is not None or args.sample_output_bin is not None:
+        if args.sample_input_bin is None or args.sample_output_bin is None:
+            raise ValueError("provide both --sample-input-bin and --sample-output-bin")
+        export_validation_tensors(npz, args.sample_input_bin, args.sample_output_bin)
+        print(f"Wrote {args.sample_input_bin}")
+        print(f"Wrote {args.sample_output_bin}")
     print(f"Wrote {args.out_path}")
 
 

@@ -74,6 +74,11 @@ namespace ternary
         Conv2DWeightsFP32 stem;
         std::array<BasicBlockWeights, 9> blocks;
         LinearWeights fc;
+        int input_channels = 0;
+        int input_h = 0;
+        int input_w = 0;
+        int num_classes = 0;
+        int sample_count = 0;
         Tensor sample_input;
         Tensor sample_outputs;
         std::vector<std::int64_t> sample_labels;

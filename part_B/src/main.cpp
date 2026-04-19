@@ -4,9 +4,11 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <fstream>
 #include <iomanip>
 #include <iostream>
 #include <numeric>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -297,6 +299,10 @@ namespace ternary
 
     float max_abs_diff(const Tensor &lhs, const Tensor &rhs)
     {
+        if (lhs.size() != rhs.size())
+        {
+            throw std::runtime_error("tensor shape mismatch when computing max_abs_diff");
+        }
         float diff = 0.0f;
         for (std::size_t i = 0; i < lhs.size(); ++i)
         {
@@ -305,13 +311,89 @@ namespace ternary
         return diff;
     }
 
+    Tensor load_tensor_nchw_f32(const std::string &path, int channels, int height, int width)
+    {
+        if (channels <= 0 || height <= 0 || width <= 0)
+        {
+            throw std::runtime_error("invalid tensor shape for sample input");
+        }
+
+        std::ifstream in(path, std::ios::binary | std::ios::ate);
+        if (!in)
+        {
+            throw std::runtime_error("failed to open sample input file: " + path);
+        }
+        const std::streamsize size_bytes = in.tellg();
+        if (size_bytes < 0)
+        {
+            throw std::runtime_error("failed to read sample input file size: " + path);
+        }
+        in.seekg(0, std::ios::beg);
+
+        const std::size_t item_count = static_cast<std::size_t>(size_bytes) / sizeof(float);
+        const std::size_t per_sample = static_cast<std::size_t>(channels) * height * width;
+        if (per_sample == 0 || item_count % per_sample != 0)
+        {
+            throw std::runtime_error("sample input file has invalid size for NCHW float32 layout: " + path);
+        }
+
+        const int batch = static_cast<int>(item_count / per_sample);
+        Tensor tensor(batch, channels, height, width);
+        in.read(reinterpret_cast<char *>(tensor.ptr()), static_cast<std::streamsize>(item_count * sizeof(float)));
+        if (!in)
+        {
+            throw std::runtime_error("failed to read sample input data: " + path);
+        }
+        return tensor;
+    }
+
+    Tensor load_tensor_nc_f32(const std::string &path, int channels, int expected_batch)
+    {
+        if (channels <= 0)
+        {
+            throw std::runtime_error("invalid class count for expected outputs");
+        }
+
+        std::ifstream in(path, std::ios::binary | std::ios::ate);
+        if (!in)
+        {
+            throw std::runtime_error("failed to open expected output file: " + path);
+        }
+        const std::streamsize size_bytes = in.tellg();
+        if (size_bytes < 0)
+        {
+            throw std::runtime_error("failed to read expected output file size: " + path);
+        }
+        in.seekg(0, std::ios::beg);
+
+        const std::size_t item_count = static_cast<std::size_t>(size_bytes) / sizeof(float);
+        if (item_count % static_cast<std::size_t>(channels) != 0)
+        {
+            throw std::runtime_error("expected output file has invalid size for NxC float32 layout: " + path);
+        }
+
+        const int batch = static_cast<int>(item_count / static_cast<std::size_t>(channels));
+        if (expected_batch > 0 && batch != expected_batch)
+        {
+            throw std::runtime_error("expected output batch size does not match sample input batch size");
+        }
+
+        Tensor tensor(batch, channels, 1, 1);
+        in.read(reinterpret_cast<char *>(tensor.ptr()), static_cast<std::streamsize>(item_count * sizeof(float)));
+        if (!in)
+        {
+            throw std::runtime_error("failed to read expected output data: " + path);
+        }
+        return tensor;
+    }
+
 } // namespace ternary
 
 int main(int argc, char **argv)
 {
     if (argc < 2)
     {
-        std::cerr << "Usage: " << argv[0] << " model.bin [--validate|--bench] [--iters N] [--warmup N] [--perf-like]\n";
+        std::cerr << "Usage: " << argv[0] << " model.bin [--validate|--bench] [--sample-input path] [--expected-output path] [--iters N] [--warmup N] [--perf-like]\n";
         return 1;
     }
 
@@ -321,6 +403,8 @@ int main(int argc, char **argv)
     bool perf_like = false;
     int warmup = 10;
     int iters = 1000;
+    std::string sample_input_path;
+    std::string expected_output_path;
 
     for (int i = 2; i < argc; ++i)
     {
@@ -343,6 +427,14 @@ int main(int argc, char **argv)
         {
             warmup = std::stoi(argv[++i]);
         }
+        else if (arg == "--sample-input" && i + 1 < argc)
+        {
+            sample_input_path = argv[++i];
+        }
+        else if (arg == "--expected-output" && i + 1 < argc)
+        {
+            expected_output_path = argv[++i];
+        }
         else if (arg == "--perf-like")
         {
             perf_like = true;
@@ -352,23 +444,47 @@ int main(int argc, char **argv)
     try
     {
         const ternary::ResNet20Weights model = ternary::load_model(model_path);
-        ternary::InferenceScratch scratch;
-        ternary::prepare_scratch(model, model.sample_input.n, scratch);
 
         if (validate)
         {
-            const ternary::Tensor logits = ternary::run_resnet20(model, model.sample_input, scratch);
+            const bool external_requested = !sample_input_path.empty() || !expected_output_path.empty();
+            ternary::Tensor validate_input;
+            ternary::Tensor expected_output;
+
+            if (external_requested)
+            {
+                if (sample_input_path.empty() || expected_output_path.empty())
+                {
+                    throw std::runtime_error("--validate with external tensors requires both --sample-input and --expected-output");
+                }
+                validate_input = ternary::load_tensor_nchw_f32(sample_input_path, model.input_channels, model.input_h, model.input_w);
+                expected_output = ternary::load_tensor_nc_f32(expected_output_path, model.num_classes, validate_input.n);
+            }
+            else if (model.sample_count > 0)
+            {
+                validate_input = model.sample_input;
+                expected_output = model.sample_outputs;
+            }
+            else
+            {
+                throw std::runtime_error("model.bin has no embedded validation tensors; provide --sample-input and --expected-output");
+            }
+
+            ternary::InferenceScratch scratch;
+            ternary::prepare_scratch(model, validate_input.n, scratch);
+
+            const ternary::Tensor logits = ternary::run_resnet20(model, validate_input, scratch);
             ternary::Tensor probabilities = logits;
             ternary::softmax_inplace(probabilities);
-            const float diff = ternary::max_abs_diff(probabilities, model.sample_outputs);
+            const float diff = ternary::max_abs_diff(probabilities, expected_output);
 
             int matches = 0;
             for (int n = 0; n < probabilities.n; ++n)
             {
                 const float *predicted_row = probabilities.ptr() + static_cast<std::size_t>(n) * probabilities.c;
-                const float *expected_row = model.sample_outputs.ptr() + static_cast<std::size_t>(n) * model.sample_outputs.c;
+                const float *expected_row = expected_output.ptr() + static_cast<std::size_t>(n) * expected_output.c;
                 const int predicted = ternary::argmax_row(predicted_row, probabilities.c);
-                const int expected = ternary::argmax_row(expected_row, model.sample_outputs.c);
+                const int expected = ternary::argmax_row(expected_row, expected_output.c);
                 if (predicted == expected)
                 {
                     ++matches;
@@ -383,7 +499,10 @@ int main(int argc, char **argv)
 
         if (bench)
         {
-            const ternary::Tensor single = ternary::slice_first_sample(model.sample_input);
+            const ternary::Tensor single = (model.sample_count > 0)
+                                               ? ternary::slice_first_sample(model.sample_input)
+                                               : ternary::Tensor(1, model.input_channels, model.input_h, model.input_w);
+            ternary::InferenceScratch scratch;
             ternary::prepare_scratch(model, single.n, scratch);
 
             for (int i = 0; i < warmup; ++i)

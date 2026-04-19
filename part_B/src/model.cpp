@@ -145,6 +145,11 @@ namespace ternary
                 offset_ += count;
             }
 
+            std::size_t remaining() const
+            {
+                return size_ - offset_;
+            }
+
         private:
             const std::uint8_t *data_ = nullptr;
             std::size_t size_ = 0;
@@ -257,6 +262,12 @@ namespace ternary
         }
 
         ResNet20Weights model;
+        model.input_channels = static_cast<int>(header.input_channels);
+        model.input_h = static_cast<int>(header.input_h);
+        model.input_w = static_cast<int>(header.input_w);
+        model.num_classes = static_cast<int>(header.num_classes);
+        model.sample_count = static_cast<int>(header.sample_count);
+
         model.stem = read_fp32_conv(reader);
         for (auto &block : model.blocks)
         {
@@ -271,10 +282,24 @@ namespace ternary
         }
         model.fc = read_linear(reader);
 
-        model.sample_input = read_tensor(reader, static_cast<int>(header.sample_count), static_cast<int>(header.input_channels), static_cast<int>(header.input_h), static_cast<int>(header.input_w));
-        model.sample_labels.resize(header.sample_count);
-        reader.read_bytes(model.sample_labels.data(), sizeof(std::int64_t) * header.sample_count);
-        model.sample_outputs = read_tensor(reader, static_cast<int>(header.sample_count), static_cast<int>(header.num_classes), 1, 1);
+        const bool has_embedded_samples =
+            model.sample_count > 0 &&
+            reader.remaining() >=
+                (static_cast<std::size_t>(model.sample_count) * model.input_channels * model.input_h * model.input_w * sizeof(float) +
+                 static_cast<std::size_t>(model.sample_count) * sizeof(std::int64_t) +
+                 static_cast<std::size_t>(model.sample_count) * model.num_classes * sizeof(float));
+
+        if (has_embedded_samples)
+        {
+            model.sample_input = read_tensor(reader, model.sample_count, model.input_channels, model.input_h, model.input_w);
+            model.sample_labels.resize(static_cast<std::size_t>(model.sample_count));
+            reader.read_bytes(model.sample_labels.data(), sizeof(std::int64_t) * static_cast<std::size_t>(model.sample_count));
+            model.sample_outputs = read_tensor(reader, model.sample_count, model.num_classes, 1, 1);
+        }
+        else
+        {
+            model.sample_count = 0;
+        }
         return model;
     }
 

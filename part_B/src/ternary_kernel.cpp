@@ -62,7 +62,29 @@ namespace ternary
             return _mm_cvtss_f32(sum);
         }
 
+        inline int horizontal_sum_i32(__m256i value)
+        {
+            alignas(32) int32_t lanes[8];
+            _mm256_store_si256(reinterpret_cast<__m256i *>(lanes), value);
+            int total = 0;
+            for (int lane : lanes)
+            {
+                total += lane;
+            }
+            return total;
+        }
+
     } // namespace
+
+    bool cpu_supports_avx_vnni()
+    {
+#if defined(__GNUC__) || defined(__clang__)
+        __builtin_cpu_init();
+        return __builtin_cpu_supports("avxvnni");
+#else
+        return false;
+#endif
+    }
 
     float dot_product_fp32_avx2(const float *__restrict lhs, const float *__restrict rhs, int length)
     {
@@ -94,6 +116,129 @@ namespace ternary
             sum += lhs[index] * rhs[index];
         }
         return sum;
+    }
+
+    void dot_product_u8s8_vnni(const std::uint8_t *__restrict activation,
+                               const std::int8_t *__restrict weights,
+                               int packed_bytes, int *__restrict result)
+    {
+        __m256i acc = _mm256_setzero_si256();
+        int index = 0;
+        for (; index + 31 < packed_bytes; index += 32)
+        {
+            const __m256i act = _mm256_loadu_si256(reinterpret_cast<const __m256i *>(activation + index));
+            const __m256i w = _mm256_load_si256(reinterpret_cast<const __m256i *>(weights + index));
+            acc = _mm256_dpbusd_epi32(acc, act, w);
+        }
+        int total = horizontal_sum_i32(acc);
+        for (; index < packed_bytes; ++index)
+        {
+            total += static_cast<int>(activation[index]) * static_cast<int>(weights[index]);
+        }
+        *result = total;
+    }
+
+    void dot_product_u8s8_4x_vnni(const std::uint8_t *__restrict activation,
+                                  const std::int8_t *__restrict weights0,
+                                  const std::int8_t *__restrict weights1,
+                                  const std::int8_t *__restrict weights2,
+                                  const std::int8_t *__restrict weights3,
+                                  int packed_bytes,
+                                  int *__restrict results)
+    {
+        __m256i acc0 = _mm256_setzero_si256();
+        __m256i acc1 = _mm256_setzero_si256();
+        __m256i acc2 = _mm256_setzero_si256();
+        __m256i acc3 = _mm256_setzero_si256();
+
+        int index = 0;
+        for (; index + 31 < packed_bytes; index += 32)
+        {
+            const __m256i act = _mm256_loadu_si256(reinterpret_cast<const __m256i *>(activation + index));
+            acc0 = _mm256_dpbusd_epi32(acc0, act, _mm256_load_si256(reinterpret_cast<const __m256i *>(weights0 + index)));
+            acc1 = _mm256_dpbusd_epi32(acc1, act, _mm256_load_si256(reinterpret_cast<const __m256i *>(weights1 + index)));
+            acc2 = _mm256_dpbusd_epi32(acc2, act, _mm256_load_si256(reinterpret_cast<const __m256i *>(weights2 + index)));
+            acc3 = _mm256_dpbusd_epi32(acc3, act, _mm256_load_si256(reinterpret_cast<const __m256i *>(weights3 + index)));
+        }
+
+        results[0] = horizontal_sum_i32(acc0);
+        results[1] = horizontal_sum_i32(acc1);
+        results[2] = horizontal_sum_i32(acc2);
+        results[3] = horizontal_sum_i32(acc3);
+
+        for (; index < packed_bytes; ++index)
+        {
+            const int a = static_cast<int>(activation[index]);
+            results[0] += a * static_cast<int>(weights0[index]);
+            results[1] += a * static_cast<int>(weights1[index]);
+            results[2] += a * static_cast<int>(weights2[index]);
+            results[3] += a * static_cast<int>(weights3[index]);
+        }
+    }
+
+    void dot_product_u8s8_2x4_vnni(const std::uint8_t *__restrict act0,
+                                   const std::uint8_t *__restrict act1,
+                                   const std::int8_t *__restrict weights0,
+                                   const std::int8_t *__restrict weights1,
+                                   const std::int8_t *__restrict weights2,
+                                   const std::int8_t *__restrict weights3,
+                                   int packed_bytes,
+                                   int *__restrict res0,
+                                   int *__restrict res1)
+    {
+        __m256i acc0_0 = _mm256_setzero_si256();
+        __m256i acc0_1 = _mm256_setzero_si256();
+        __m256i acc0_2 = _mm256_setzero_si256();
+        __m256i acc0_3 = _mm256_setzero_si256();
+
+        __m256i acc1_0 = _mm256_setzero_si256();
+        __m256i acc1_1 = _mm256_setzero_si256();
+        __m256i acc1_2 = _mm256_setzero_si256();
+        __m256i acc1_3 = _mm256_setzero_si256();
+
+        int index = 0;
+        for (; index + 31 < packed_bytes; index += 32)
+        {
+            const __m256i a0 = _mm256_loadu_si256(reinterpret_cast<const __m256i *>(act0 + index));
+            const __m256i a1 = _mm256_loadu_si256(reinterpret_cast<const __m256i *>(act1 + index));
+            const __m256i w0 = _mm256_load_si256(reinterpret_cast<const __m256i *>(weights0 + index));
+            const __m256i w1 = _mm256_load_si256(reinterpret_cast<const __m256i *>(weights1 + index));
+            const __m256i w2 = _mm256_load_si256(reinterpret_cast<const __m256i *>(weights2 + index));
+            const __m256i w3 = _mm256_load_si256(reinterpret_cast<const __m256i *>(weights3 + index));
+
+            acc0_0 = _mm256_dpbusd_epi32(acc0_0, a0, w0);
+            acc1_0 = _mm256_dpbusd_epi32(acc1_0, a1, w0);
+            acc0_1 = _mm256_dpbusd_epi32(acc0_1, a0, w1);
+            acc1_1 = _mm256_dpbusd_epi32(acc1_1, a1, w1);
+            acc0_2 = _mm256_dpbusd_epi32(acc0_2, a0, w2);
+            acc1_2 = _mm256_dpbusd_epi32(acc1_2, a1, w2);
+            acc0_3 = _mm256_dpbusd_epi32(acc0_3, a0, w3);
+            acc1_3 = _mm256_dpbusd_epi32(acc1_3, a1, w3);
+        }
+
+        res0[0] = horizontal_sum_i32(acc0_0);
+        res0[1] = horizontal_sum_i32(acc0_1);
+        res0[2] = horizontal_sum_i32(acc0_2);
+        res0[3] = horizontal_sum_i32(acc0_3);
+
+        res1[0] = horizontal_sum_i32(acc1_0);
+        res1[1] = horizontal_sum_i32(acc1_1);
+        res1[2] = horizontal_sum_i32(acc1_2);
+        res1[3] = horizontal_sum_i32(acc1_3);
+
+        for (; index < packed_bytes; ++index)
+        {
+            const int a0 = static_cast<int>(act0[index]);
+            const int a1 = static_cast<int>(act1[index]);
+            res0[0] += a0 * static_cast<int>(weights0[index]);
+            res1[0] += a1 * static_cast<int>(weights0[index]);
+            res0[1] += a0 * static_cast<int>(weights1[index]);
+            res1[1] += a1 * static_cast<int>(weights1[index]);
+            res0[2] += a0 * static_cast<int>(weights2[index]);
+            res1[2] += a1 * static_cast<int>(weights2[index]);
+            res0[3] += a0 * static_cast<int>(weights3[index]);
+            res1[3] += a1 * static_cast<int>(weights3[index]);
+        }
     }
 
     float dot_product_ternary_avx2(const float *__restrict activation,

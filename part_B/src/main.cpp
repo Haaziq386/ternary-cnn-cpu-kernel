@@ -23,6 +23,7 @@
 
 #include "model.h"
 #include "resnet20.h"
+#include "ternary_kernel.h"
 
 namespace ternary
 {
@@ -443,6 +444,10 @@ int main(int argc, char **argv)
 
     try
     {
+        if (!ternary::cpu_supports_avx_vnni())
+        {
+            throw std::runtime_error("this binary requires AVX-VNNI support");
+        }
         const ternary::ResNet20Weights model = ternary::load_model(model_path);
 
         if (validate)

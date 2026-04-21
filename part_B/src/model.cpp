@@ -156,8 +156,8 @@ namespace ternary
             std::size_t offset_ = 0;
         };
 
-        template <typename T>
-        void read_vector(Reader &reader, std::vector<T> &values, std::size_t count)
+        template <typename T, typename Alloc>
+        void read_vector(Reader &reader, std::vector<T, Alloc> &values, std::size_t count)
         {
             values.resize(count);
             reader.read_bytes(values.data(), sizeof(T) * count);
@@ -192,7 +192,7 @@ namespace ternary
             return weights;
         }
 
-        TernaryConv2DWeights read_ternary_conv(Reader &reader)
+        TernaryConv2DWeights read_ternary_conv_v1(Reader &reader)
         {
             const LayerHeader header = reader.read<LayerHeader>();
             if (header.kind != static_cast<std::uint32_t>(LayerKind::kTernaryConv))
@@ -214,8 +214,52 @@ namespace ternary
             reader.skip(header.name_len);
             const std::size_t packed_bytes_per_row = static_cast<std::size_t>(weights.k_pad) / 8;
             const std::size_t total_packed = static_cast<std::size_t>(weights.out_channels) * packed_bytes_per_row;
-            read_vector(reader, weights.pos_bits, total_packed);
-            read_vector(reader, weights.neg_bits, total_packed);
+            std::vector<std::uint8_t> pos_bits;
+            std::vector<std::uint8_t> neg_bits;
+            read_vector(reader, pos_bits, total_packed);
+            read_vector(reader, neg_bits, total_packed);
+            weights.weights.resize(static_cast<std::size_t>(weights.out_channels) * weights.k_pad);
+            for (int oc = 0; oc < weights.out_channels; ++oc)
+            {
+                const std::size_t row_offset = static_cast<std::size_t>(oc) * weights.k_pad;
+                for (int i = 0; i < weights.k_pad; ++i)
+                {
+                    const std::size_t byte_index = row_offset / 8 + static_cast<std::size_t>(i / 8);
+                    const std::uint8_t bit = static_cast<std::uint8_t>(1u << (i % 8));
+                    const bool is_pos = (pos_bits[byte_index] & bit) != 0;
+                    const bool is_neg = (neg_bits[byte_index] & bit) != 0;
+                    weights.weights[row_offset + static_cast<std::size_t>(i)] = is_pos ? 1 : (is_neg ? -1 : 0);
+                }
+            }
+            read_vector(reader, weights.scale, weights.out_channels);
+            read_vector(reader, weights.bias, weights.out_channels);
+            return weights;
+        }
+
+        TernaryConv2DWeights read_ternary_conv_v2(Reader &reader)
+        {
+            const LayerHeader header = reader.read<LayerHeader>();
+            if (header.kind != static_cast<std::uint32_t>(LayerKind::kTernaryConvInt8))
+            {
+                throw std::runtime_error("expected int8 ternary conv layer in model file");
+            }
+            TernaryConv2DWeights weights;
+            weights.in_channels = static_cast<int>(header.in_channels);
+            weights.out_channels = static_cast<int>(header.out_channels);
+            weights.kernel_h = static_cast<int>(header.kernel_h);
+            weights.kernel_w = static_cast<int>(header.kernel_w);
+            weights.stride_h = static_cast<int>(header.stride_h);
+            weights.stride_w = static_cast<int>(header.stride_w);
+            weights.padding_h = static_cast<int>(header.padding_h);
+            weights.padding_w = static_cast<int>(header.padding_w);
+            weights.output_h = static_cast<int>(header.output_h);
+            weights.output_w = static_cast<int>(header.output_w);
+            weights.k_pad = static_cast<int>(header.k_pad);
+            std::uint32_t activation_scale_bits = header.reserved;
+            std::memcpy(&weights.activation_scale, &activation_scale_bits, sizeof(float));
+            reader.skip(header.name_len);
+            const std::size_t packed = static_cast<std::size_t>(weights.out_channels) * weights.k_pad;
+            read_vector(reader, weights.weights, packed);
             read_vector(reader, weights.scale, weights.out_channels);
             read_vector(reader, weights.bias, weights.out_channels);
             return weights;
@@ -258,7 +302,10 @@ namespace ternary
         }
         if (header.version != 1)
         {
-            throw std::runtime_error("unsupported model version");
+            if (header.version != 2)
+            {
+                throw std::runtime_error("unsupported model version");
+            }
         }
 
         ResNet20Weights model;
@@ -271,8 +318,16 @@ namespace ternary
         model.stem = read_fp32_conv(reader);
         for (auto &block : model.blocks)
         {
-            block.conv1 = read_ternary_conv(reader);
-            block.conv2 = read_ternary_conv(reader);
+            if (header.version == 1)
+            {
+                block.conv1 = read_ternary_conv_v1(reader);
+                block.conv2 = read_ternary_conv_v1(reader);
+            }
+            else
+            {
+                block.conv1 = read_ternary_conv_v2(reader);
+                block.conv2 = read_ternary_conv_v2(reader);
+            }
             const std::uint32_t has_projection = reader.read<std::uint32_t>();
             if (has_projection != 0)
             {
@@ -308,7 +363,8 @@ namespace ternary
         scratch.a.reserve(static_cast<std::size_t>(batch_size) * 16 * 32 * 32);
         scratch.b.reserve(static_cast<std::size_t>(batch_size) * 16 * 32 * 32);
         scratch.c.reserve(static_cast<std::size_t>(batch_size) * 16 * 32 * 32);
-        scratch.im2col.reserve(estimate_im2col_capacity(model, batch_size));
+        scratch.im2col_fp32.reserve(estimate_im2col_capacity(model, batch_size));
+        scratch.im2col_u8.reserve(estimate_im2col_capacity(model, batch_size));
     }
 
     std::size_t estimate_im2col_capacity(const ResNet20Weights &model, int batch_size)

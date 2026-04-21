@@ -1,7 +1,9 @@
 #pragma once
 
 #include <array>
+#include <cstdlib>
 #include <cstdint>
+#include <new>
 #include <string>
 #include <vector>
 
@@ -10,10 +12,47 @@
 namespace ternary
 {
 
+    template <typename T, std::size_t Alignment>
+    struct AlignedAllocator
+    {
+        using value_type = T;
+
+        AlignedAllocator() noexcept = default;
+
+        template <typename U>
+        AlignedAllocator(const AlignedAllocator<U, Alignment> &) noexcept {}
+
+        [[nodiscard]] T *allocate(std::size_t count)
+        {
+            if (count > static_cast<std::size_t>(-1) / sizeof(T))
+            {
+                throw std::bad_alloc();
+            }
+            void *ptr = nullptr;
+            if (posix_memalign(&ptr, Alignment, count * sizeof(T)) != 0)
+            {
+                throw std::bad_alloc();
+            }
+            return static_cast<T *>(ptr);
+        }
+
+        void deallocate(T *ptr, std::size_t) noexcept
+        {
+            std::free(ptr);
+        }
+
+        template <typename U>
+        struct rebind
+        {
+            using other = AlignedAllocator<U, Alignment>;
+        };
+    };
+
     enum class LayerKind : std::uint32_t
     {
         kFp32Conv = 0,
         kTernaryConv = 1,
+        kTernaryConvInt8 = 3,
         kLinear = 2,
     };
 
@@ -47,8 +86,8 @@ namespace ternary
         int output_h = 0;
         int output_w = 0;
         int k_pad = 0;
-        std::vector<std::uint8_t> pos_bits;
-        std::vector<std::uint8_t> neg_bits;
+        float activation_scale = 1.0f;
+        std::vector<std::int8_t, AlignedAllocator<std::int8_t, 32>> weights;
         std::vector<float> scale;
         std::vector<float> bias;
     };
@@ -89,7 +128,8 @@ namespace ternary
         Tensor a;
         Tensor b;
         Tensor c;
-        std::vector<float> im2col;
+        std::vector<float> im2col_fp32;
+        std::vector<std::uint8_t> im2col_u8;
     };
 
     ResNet20Weights load_model(const std::string &path);

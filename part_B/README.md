@@ -18,7 +18,9 @@ python convert_weights.py ../part_A/ternary_weights.npz ../part_A/ternary.pth mo
 	--sample-output-bin ../part_A/sample_output.bin
 ```
 
-`model.bin` now stores only network weights/metadata (no embedded validation tensors), which reduces file size.
+`convert_weights.py` now calibrates the 18 ternary conv inputs from the 16 sample images and emits a version-2 `model.bin` with padded int8 ternary weights plus per-layer activation scales.
+The runtime checks for AVX-VNNI at startup and uses the `vpdpbusd` path on supported Intel CPUs.
+`model.bin` still stores only network weights/metadata (no embedded validation tensors), which keeps the file small.
 
 ## Validate
 

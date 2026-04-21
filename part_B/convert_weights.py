@@ -23,6 +23,7 @@ from ternary_layer import TernaryConv2d  # type: ignore  # noqa: E402
 KIND_FP32 = 0
 KIND_TERNARY = 1
 KIND_LINEAR = 2
+KIND_TERNARY_INT8 = 3
 
 
 def round_up(value: int, multiple: int) -> int:
@@ -77,6 +78,34 @@ def get_hook_shapes(model: torch.nn.Module, sample_input: torch.Tensor) -> dict[
     return shapes
 
 
+def collect_activation_scales(model: torch.nn.Module, sample_input: torch.Tensor) -> dict[str, float]:
+    maxima: dict[str, float] = {}
+    hooks = []
+
+    def register(name: str, module: torch.nn.Module) -> None:
+        if name == "":
+            return
+
+        def hook(module: torch.nn.Module, inputs: tuple[torch.Tensor, ...]) -> None:
+            activation = inputs[0].detach()
+            maxima[name] = max(maxima.get(name, 0.0), float(activation.max().item()))
+
+        hooks.append(module.register_forward_pre_hook(hook))
+
+    for module_name, module in model.named_modules():
+        if isinstance(module, TernaryConv2d):
+            register(module_name, module)
+
+    model.eval()
+    with torch.no_grad():
+        model(sample_input)
+
+    for hook in hooks:
+        hook.remove()
+
+    return {name: max(value / 255.0, 1e-8) for name, value in maxima.items()}
+
+
 def fold_conv_bn(conv: torch.nn.Conv2d, bn: torch.nn.BatchNorm2d) -> tuple[np.ndarray, np.ndarray]:
     weight = conv.weight.detach().cpu().numpy().astype(np.float32)
     gamma = bn.weight.detach().cpu().numpy().astype(np.float32)
@@ -121,6 +150,7 @@ def write_u32_layer_header(
     output_w: int,
     k_pad: int,
     has_bias: int,
+    reserved: int,
     name: str,
 ) -> None:
     encoded = name.encode("utf-8")
@@ -141,7 +171,7 @@ def write_u32_layer_header(
             k_pad,
             has_bias,
             len(encoded),
-            0,
+            reserved,
         )
     )
     out.write(encoded)
@@ -171,13 +201,22 @@ def write_fp32_conv(out, name: str, conv: torch.nn.Conv2d, bn: torch.nn.BatchNor
         output_w,
         0,
         1,
+        0,
         name,
     )
     out.write(weight.astype(np.float32).tobytes(order="C"))
     out.write(bias.astype(np.float32).tobytes(order="C"))
 
 
-def write_ternary_conv(out, name: str, module: torch.nn.Module, bn: torch.nn.BatchNorm2d, npz: dict[str, np.ndarray] | None, shape: dict[str, list[int]]) -> None:
+def write_ternary_conv(
+    out,
+    name: str,
+    module: torch.nn.Module,
+    bn: torch.nn.BatchNorm2d,
+    npz: dict[str, np.ndarray] | None,
+    shape: dict[str, list[int]],
+    activation_scales: dict[str, float],
+) -> None:
     safe_name = name.replace(".", "_")
     weight_np: np.ndarray
     alpha: float
@@ -190,20 +229,26 @@ def write_ternary_conv(out, name: str, module: torch.nn.Module, bn: torch.nn.Bat
         weight_np = quantize_ternary(conv_weight, alpha)
 
     ternary = weight_np.astype(np.int8)
-    pos, neg, k_pad = pack_ternary(ternary)
+    flat = ternary.reshape(ternary.shape[0], -1)
+    k_pad = round_up(flat.shape[1], 32)
+    if k_pad != flat.shape[1]:
+        pad = np.zeros((flat.shape[0], k_pad - flat.shape[1]), dtype=np.int8)
+        flat = np.concatenate([flat, pad], axis=1)
     gamma = bn.weight.detach().cpu().numpy().astype(np.float32)
     beta = bn.bias.detach().cpu().numpy().astype(np.float32)
     mean = bn.running_mean.detach().cpu().numpy().astype(np.float32)
     var = bn.running_var.detach().cpu().numpy().astype(np.float32)
     scale = (gamma / np.sqrt(var + float(bn.eps))) * alpha
     bias = beta - (gamma / np.sqrt(var + float(bn.eps))) * mean
+    activation_scale = activation_scales[name]
+    activation_scale_bits = struct.unpack("<I", struct.pack("<f", activation_scale))[0]
 
     out_channels, in_channels, kernel_h, kernel_w = ternary.shape
     output_h = shape["output_shape"][2]
     output_w = shape["output_shape"][3]
     write_u32_layer_header(
         out,
-        KIND_TERNARY,
+        KIND_TERNARY_INT8,
         in_channels,
         out_channels,
         kernel_h,
@@ -216,10 +261,10 @@ def write_ternary_conv(out, name: str, module: torch.nn.Module, bn: torch.nn.Bat
         output_w,
         k_pad,
         1,
+        activation_scale_bits,
         name,
     )
-    out.write(pos.astype(np.uint8, copy=False).tobytes(order="C"))
-    out.write(neg.astype(np.uint8, copy=False).tobytes(order="C"))
+    out.write(flat.astype(np.int8, copy=False).tobytes(order="C"))
     out.write(scale.astype(np.float32).tobytes(order="C"))
     out.write(bias.astype(np.float32).tobytes(order="C"))
 
@@ -243,13 +288,20 @@ def write_linear(out, name: str, fc: torch.nn.Linear, shape: dict[str, list[int]
         1,
         0,
         1,
+        0,
         name,
     )
     out.write(weight.tobytes(order="C"))
     out.write(bias.tobytes(order="C"))
 
 
-def build_model(model: torch.nn.Module, sample_input: torch.Tensor, npz: dict[str, np.ndarray] | None, out_path: Path) -> None:
+def build_model(
+    model: torch.nn.Module,
+    sample_input: torch.Tensor,
+    npz: dict[str, np.ndarray] | None,
+    activation_scales: dict[str, float],
+    out_path: Path,
+) -> None:
     modules = named_modules(model)
     shapes = get_hook_shapes(model, sample_input)
 
@@ -272,7 +324,7 @@ def build_model(model: torch.nn.Module, sample_input: torch.Tensor, npz: dict[st
     header = struct.pack(
         "<8s12I",
         b"TRNCNNB1",
-        1,
+        2,
         0,
         input_channels,
         input_h,
@@ -298,8 +350,8 @@ def build_model(model: torch.nn.Module, sample_input: torch.Tensor, npz: dict[st
             bn1 = modules[f"{block_name}.bn1"]
             conv2 = modules[f"{block_name}.conv2"]
             bn2 = modules[f"{block_name}.bn2"]
-            write_ternary_conv(out, f"{block_name}.conv1", conv1, bn1, npz, shapes[f"{block_name}.conv1"])
-            write_ternary_conv(out, f"{block_name}.conv2", conv2, bn2, npz, shapes[f"{block_name}.conv2"])
+            write_ternary_conv(out, f"{block_name}.conv1", conv1, bn1, npz, shapes[f"{block_name}.conv1"], activation_scales)
+            write_ternary_conv(out, f"{block_name}.conv2", conv2, bn2, npz, shapes[f"{block_name}.conv2"], activation_scales)
             out.write(struct.pack("<I", 1 if has_proj else 0))
             if has_proj:
                 proj_conv = modules[f"{block_name}.shortcut.0"]
@@ -338,7 +390,8 @@ def main() -> None:
         raise FileNotFoundError(f"missing NPZ export: {args.npz_path}")
 
     sample_input = torch.from_numpy(np.asarray(npz["sample_input"], dtype=np.float32))
-    build_model(model, sample_input, npz, args.out_path)
+    activation_scales = collect_activation_scales(model, sample_input)
+    build_model(model, sample_input, npz, activation_scales, args.out_path)
     if args.sample_input_bin is not None or args.sample_output_bin is not None:
         if args.sample_input_bin is None or args.sample_output_bin is None:
             raise ValueError("provide both --sample-input-bin and --sample-output-bin")

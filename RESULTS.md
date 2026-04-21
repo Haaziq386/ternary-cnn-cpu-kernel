@@ -21,9 +21,33 @@ The top-level README only reports the best controlled result.
 
 ### Controlled multi-core runs (OpenMP)
 
-- Command: `sudo taskset -c 0-5 nice -n -20 env OMP_NUM_THREADS=6 ./build/ternary_infer model.bin --bench --iters 3000 --warmup 50`
-- Environment: pinned to 6 cores with explicit OpenMP thread count
-- Notes: use this to measure multi-core `conv_ternary` scaling separately from single-core reference numbers
+
+## R) Static INT8 ternary path with AVX-VNNI (`vpdpbusd`)
+
+### Session baseline reference
+
+- Command used for the baseline session: `taskset -c 0-5 env OMP_NUM_THREADS=6 ./build/ternary_infer model.bin --bench --iters 3000 --warmup 50`
+- Baseline best median: `1744.01 us`
+- Other baseline medians: `1747.36 us`, `1788.30 us`, `1895.12 us`, `1901.22 us`
+
+### New INT8 path
+
+- Exporter: `part_B/convert_weights.py` now performs 16-image calibration and emits version-2 `model.bin` with padded int8 ternary weights plus per-layer activation scales.
+- Runtime: `part_B/build/ternary_infer` now uses a fused uint8 im2col path and `_mm256_dpbusd_epi32` for the 18 ternary convs.
+- Validation: `16/16 top-1 matches`, `max probability diff = 0.020357`
+
+### New five-run benchmark set
+
+| Run | mean (us) | median (us) | p99 (us) |
+|---|---:|---:|---:|
+| 1 | 1066.93 | 1105.48 | 1605.87 |
+| 2 | 1072.07 | 1118.33 | 1589.90 |
+| 3 | 1095.69 | 1139.51 | 1576.47 |
+| 4 | 1137.32 | 1181.04 | 1611.98 |
+| 5 | 1174.41 | 1213.93 | 1693.23 |
+
+- New best median: `1105.48 us`
+- Session outcome: `1105.48 us` vs `1744.01 us` baseline best median, so the new INT8 path is faster on this machine.
 
 ---
 

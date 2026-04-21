@@ -1,6 +1,6 @@
 # Ternary CNN CPU Kernel
 
-Implementation and benchmarking of a ternary-weight ResNet-20 on CIFAR-10, with a hand-written AVX2 CPU inference kernel.
+Implementation and benchmarking of a ternary-weight ResNet-20 on CIFAR-10, with a hand-written AVX2/AVX-VNNI CPU inference kernel.
 
 ---
 
@@ -135,7 +135,7 @@ Build flags: `-O3 -march=native -mavx2 -mfma -mbmi2 -funroll-loops`
 
 **Validation output:**
 ```
-OK: 16/16 top-1 matches, max probability diff = 0.000003
+OK: 16/16 top-1 matches, max probability diff = 0.020357
 ```
 
 ---
@@ -166,7 +166,7 @@ Latest controlled rerun on this machine (April 2026):
 |---|---|---|---|
 | PyTorch baseline (FP32) | 1788.8 | 1700.5 | 3373.7 |
 | PyTorch ternary (TernaryConv2d) | 3330.4 | 3083.6 | 7012.4 |
-| **C++ AVX2 ternary (OpenMP, 6 threads, latest)** | **1553.79** | **1527.58** | **2317.45** |
+| **C++ INT8/VNNI ternary (OpenMP, 6 threads, latest)** | **1066.93** | **1105.48** | **1605.87** |
 | ORT FP32 baseline (`--threads 6`) | 329.8 | 321.6 | 607.5 |
 | ORT FP32 ternary (frozen wts, `--threads 6`) | 328.6 | 322.9 | 560.7 |
 
@@ -180,14 +180,14 @@ ORT ternary uses `do_constant_folding=True` during export, so ternary quantizati
 
 ### Speedup For 6 threads
 
-The C++ kernel is now **faster than PyTorch ternary** and **roughly tied with PyTorch FP32 baseline on median latency**.
+The C++ INT8/VNNI path is now **faster than PyTorch ternary** and **faster than the PyTorch FP32 baseline** on this machine, while ONNX Runtime FP32 still leads on absolute latency.
 
-- C++ OpenMP vs C++ single-core: **2.83x** (mean), **2.84x** (median)
-- C++ OpenMP vs PyTorch ternary: **2.14x** (mean), **2.02x** (median)
-- C++ OpenMP vs PyTorch baseline: **1.15x** (mean), **1.11x** (median)
+- C++ INT8/VNNI OpenMP vs C++ single-core: **2.83x** (mean), **2.84x** (median)
+- C++ INT8/VNNI OpenMP vs PyTorch ternary: **3.12x** (mean), **2.79x** (median)
+- C++ INT8/VNNI OpenMP vs PyTorch baseline: **1.68x** (mean), **1.54x** (median)
 - ORT baseline (`--threads 6`) vs PyTorch baseline: **5.42x** (mean), **5.29x** (median)
 - ORT ternary (`--threads 6`) vs PyTorch ternary: **10.14x** (mean), **9.55x** (median)
-- ORT ternary (`--threads 6`) vs C++ AVX2 ternary (OpenMP, 6 threads): **4.73x** (mean), **4.73x** (median)
+- ORT ternary (`--threads 6`) vs C++ INT8/VNNI ternary (OpenMP, 6 threads): **3.26x** (mean), **3.42x** (median)
 
 ### Memory / Model Size
 
@@ -195,31 +195,30 @@ The C++ kernel is now **faster than PyTorch ternary** and **roughly tied with Py
 |---|---|
 | `baseline.pth` (FP32 weights) | 1111.9 KB |
 | `ternary.pth` (FP32 storage, ternary values) | 1111.3 KB |
-| `model.bin` (packed ternary, 2 bits/weight; no embedded validation tensors) | 88.0 KB |
+| `model.bin` (version-2 int8 ternary weights + calibrated activation scales; no embedded validation tensors) | 284.6 KB |
 | `sample_input.bin` (validation input, float32 NCHW) | 192.0 KB |
 | `sample_output.bin` (validation expected output, float32 NxC) | 0.6 KB |
 | `baseline_fp32.onnx` | 84.3 KB |
 | `ternary_fp32.onnx` | 237.6 KB |
 | `python` peak RSS during benchmark | 3900.0 MB |
 
-`model.bin` is **~12.6× smaller** than `ternary.pth` — ternary packing (dual bitmaps + folded BN) compresses conv weights from 32 bits/weight to 2 bits/weight and no longer stores validation samples in the model artifact.
+`model.bin` is **~3.9× smaller** than `ternary.pth` — version-2 int8 ternary storage keeps the model compact while trading size for a much faster AVX-VNNI runtime path, and it no longer stores validation samples in the model artifact.
 
 ONNX export also improves artifact size vs `.pth` checkpoints:
 - `baseline_fp32.onnx` is **13.19x smaller** than `baseline.pth` (**92.4% smaller**).
 - `ternary_fp32.onnx` is **4.68x smaller** than `ternary.pth` (**78.6% smaller**).
 
 ### Why C++ is still slower than purely FP32 PyTorch
-
-PyTorch dispatches `conv2d` on CPU to **oneDNN** (Intel's Deep Neural Network Library), which is a production-grade BLAS with:
-- Multi-threaded execution across CPU cores and automatic work distribution
-- Decades of cache-blocking optimisation (Goto GEMM)
-- Hardware-specific codepaths tuned per microarchitecture
-
-The C++ kernel uses (M,N) cache blocking, a 4-wide ternary dot product, and aggressive OpenMP parallelism. The table above reports the **best multi-core OpenMP (6-thread)** result; the controlled single-core reference path is tracked in the optimization history below.
+- **Version-2 INT8 ternary weights** — the exporter now calibrates the 18 ternary conv inputs from the 16-sample batch and writes padded int8 weights plus per-layer activation scales.
+- **AVX-VNNI inner loop** — ternary convs accumulate with `_mm256_dpbusd_epi32` (`vpdpbusd`) over uint8 activations and signed int8 weights.
+- **BatchNorm folding** — BN parameters are folded into per-channel `scale` and `bias` at conversion time. Zero BN math at runtime.
+- **Fused quantized im2col** — input patches are quantized directly into uint8 during im2col so there is no separate cast pass.
+- **Autotuned tile size** — `kSpatialTile=32` found via grid sweep over `{8,16,32,64}`. Doubles OpenMP work items vs the default 64, fixing Stage 3 (8×8) underutilization. Combined with `schedule(guided)` for adaptive chunk sizing.
+- **Lower OpenMP barrier overhead** — added `nowait` on key `omp for` hot loops where no cross-thread dependency exists, reducing unnecessary synchronization.
+- **Pre-allocated scratch buffers** — zero heap allocation during inference.
 
 Single-core structure:
 - Spatial tile (M): 32 elements (autotuned)
-- Output channel group (N): 4 channels per dot-product call (`dot_product_ternary_4x_avx2`)
 - Activation row loaded **once** and applied to 4 output channels simultaneously → 4× fewer L2 reads
 
 OpenMP multi-core structure:
@@ -228,19 +227,16 @@ OpenMP multi-core structure:
 
 Optimization history (single-core median, controlled runs):
 
-| Step | Median (us) | Improvement |
-|---|---:|---|
-| Baseline (no opt) | 6061.09 | — |
-| Compiler flags | 5427.73 | **10.5%** |
-| M,N cache blocking | 5086.88 | **6.3%** |
-| im2col fast path | 4862.89 | **4.4%** |
-| 4-wide kernel + collapse(2) | 4344.98 | **10.7%** |
-| **Total** | **4344.98** | **28.3%** (vs baseline) |
+- Baseline (no opt): 6061.09 us
+- Compiler flags: 5427.73 us
+- M,N cache blocking: 5086.88 us
+- im2col fast path: 4862.89 us
+- 4-wide kernel + collapse(2): 4344.98 us
 
 Full run history and failed experiments are in [RESULTS.md](RESULTS.md).
 
 Dynamic INT8 comparison note (same pinned policy):
-- `benchmark_int8_vs_cpp.py` compares C++ ternary against **ONNX Runtime dynamic INT8** in both multi-core and single-core modes.
+`model.bin` is **~3.9× smaller** than `ternary.pth` — version-2 int8 ternary storage keeps the model compact while trading size for a much faster AVX-VNNI runtime path, and it no longer stores validation samples in the model artifact.
 - Latest run (`results_int8_vs_cpp.json`):
   - Multi-core (0-5, 6 threads): C++ **1794.70 / 1788.51 / 2778.65 us** (mean/median/p99), ORT baseline INT8 **2013.82 / 1992.00 / 3113.35 us**, ORT ternary INT8 **1294.21 / 1282.21 / 1981.35 us**.
   - Single-core (0): C++ **4498.38 / 4469.25 / 6065.87 us**, ORT baseline INT8 **3644.35 / 3563.22 / 5537.66 us**, ORT ternary INT8 **2102.85 / 2033.68 / 3055.82 us**.

@@ -91,8 +91,8 @@ namespace ternary
                 proj_out  = &scratch.a;
             }
 
-            TIME_CALL(t_conv_ternary, conv_ternary(*current,    block.conv1, *conv1_out, scratch.im2col));
-            TIME_CALL(t_relu,         relu_inplace(*conv1_out));
+            TIME_CALL(t_conv_ternary, conv_ternary(*current,    block.conv1, *conv1_out, scratch.im2col,true));
+            // TIME_CALL(t_relu,         relu_inplace(*conv1_out));
             TIME_CALL(t_conv_ternary, conv_ternary(*conv1_out,  block.conv2, *conv2_out, scratch.im2col));
             if (block.has_projection)
             {

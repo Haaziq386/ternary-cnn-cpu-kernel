@@ -870,7 +870,7 @@ taskset -c 0 "$(which python)" benchmark_onnx.py --threads 1 --iters 3000 --warm
 
 | Implementation | mean (us) | median (us) | p99 (us) |
 |---|---:|---:|---:|
-| C++ ternary (`benchmark_static_int8_vs_cpp.py`) | 1786.07 | 1782.85 | 2747.49 |
+| **C++ AVX2 ternary (OpenMP, 6 threads, latest)** | **1553.79** | **1527.58** | **2317.45** |
 | ORT baseline static INT8 | 250.43 | 237.23 | 503.99 |
 | ORT ternary static INT8 | 450.68 | 418.38 | 957.47 |
 | ORT baseline dynamic INT8 | 2013.82 | 1992.00 | 3113.35 |

@@ -53,7 +53,15 @@ namespace ternary
         kFp32Conv = 0,
         kTernaryConv = 1,
         kTernaryConvInt8 = 3,
+        kTernaryConvTL = 4,
         kLinear = 2,
+    };
+
+    enum class TernaryStorageKind : std::uint32_t
+    {
+        kInt8 = 0,
+        kTL1 = 1,
+        kTL2 = 2,
     };
 
     struct Conv2DWeightsFP32
@@ -75,6 +83,7 @@ namespace ternary
 
     struct TernaryConv2DWeights
     {
+        TernaryStorageKind storage_kind = TernaryStorageKind::kInt8;
         int in_channels = 0;
         int out_channels = 0;
         int kernel_h = 0;
@@ -86,8 +95,18 @@ namespace ternary
         int output_h = 0;
         int output_w = 0;
         int k_pad = 0;
+        int tl_group_size = 0;
+        int tl_groups = 0;
+        int tl_oc_stride = 0;
+        int tl_tail_start = 0;
+        int tl1_tail_groups = 0;
+        int tl1_tail_oc_stride = 0;
         float activation_scale = 1.0f;
         std::vector<std::int8_t, AlignedAllocator<std::int8_t, 32>> weights;
+        std::vector<std::uint8_t, AlignedAllocator<std::uint8_t, 32>> tl_index;
+        std::vector<std::uint8_t, AlignedAllocator<std::uint8_t, 32>> tl_sign;
+        std::vector<std::uint8_t, AlignedAllocator<std::uint8_t, 32>> tl1_tail_index;
+        std::vector<std::uint8_t, AlignedAllocator<std::uint8_t, 32>> tl1_tail_sign;
         std::vector<float> scale;
         std::vector<float> bias;
     };

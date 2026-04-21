@@ -24,6 +24,7 @@ KIND_FP32 = 0
 KIND_TERNARY = 1
 KIND_LINEAR = 2
 KIND_TERNARY_INT8 = 3
+KIND_TERNARY_TL = 4
 
 
 def round_up(value: int, multiple: int) -> int:
@@ -133,6 +134,92 @@ def pack_ternary(ternary: np.ndarray) -> tuple[np.ndarray, np.ndarray, int]:
     pos = np.packbits((flat > 0).astype(np.uint8), axis=1, bitorder="little")
     neg = np.packbits((flat < 0).astype(np.uint8), axis=1, bitorder="little")
     return pos.astype(np.uint8), neg.astype(np.uint8), k_pad
+
+
+def encode_tl1_pair(w0: int, w1: int) -> tuple[int, int]:
+    pair_to_code: dict[tuple[int, int], tuple[int, int]] = {
+        (0, 0): (0, 0),
+        (0, 1): (1, 0),
+        (0, -1): (1, 1),
+        (1, 0): (2, 0),
+        (-1, 0): (2, 1),
+        (1, 1): (3, 0),
+        (-1, -1): (3, 1),
+        (1, -1): (4, 0),
+        (-1, 1): (4, 1),
+    }
+    return pair_to_code[(w0, w1)]
+
+
+def encode_tl2_triplet(w0: int, w1: int, w2: int) -> tuple[int, int]:
+    unsigned_map: dict[tuple[int, int, int], int] = {
+        (0, 0, 0): 0,
+        (0, 0, 1): 1,
+        (0, 1, 0): 2,
+        (1, 0, 0): 3,
+        (0, 1, 1): 4,
+        (1, 0, 1): 5,
+        (1, 1, 0): 6,
+        (1, 1, 1): 7,
+        (0, 1, -1): 8,
+        (1, 0, -1): 9,
+        (1, -1, 0): 10,
+        (1, 1, -1): 11,
+        (1, -1, 1): 12,
+        (1, -1, -1): 13,
+    }
+
+    key = (w0, w1, w2)
+    if key in unsigned_map:
+        return unsigned_map[key], 0
+    neg = (-w0, -w1, -w2)
+    if neg in unsigned_map:
+        return unsigned_map[neg], 1
+    raise ValueError(f"invalid TL2 triplet: {key}")
+
+
+def build_tl_group_major(
+    flat: np.ndarray,
+    group_size: int,
+) -> tuple[np.ndarray, np.ndarray, int, int, int, np.ndarray, np.ndarray, int, int]:
+    out_channels, k_pad = flat.shape
+    oc_stride = round_up(out_channels, 16)
+
+    if group_size == 2:
+        groups = k_pad // 2
+        index = np.zeros((groups, oc_stride), dtype=np.uint8)
+        sign = np.zeros((groups, oc_stride), dtype=np.uint8)
+        for g in range(groups):
+            base = g * 2
+            for oc in range(out_channels):
+                idx, s = encode_tl1_pair(int(flat[oc, base]), int(flat[oc, base + 1]))
+                index[g, oc] = idx
+                sign[g, oc] = s
+        return index, sign, groups, oc_stride, k_pad, np.zeros((0, 0), dtype=np.uint8), np.zeros((0, 0), dtype=np.uint8), 0, 0
+
+    main_len = (k_pad // 3) * 3
+    groups = main_len // 3
+    index = np.zeros((groups, oc_stride), dtype=np.uint8)
+    sign = np.zeros((groups, oc_stride), dtype=np.uint8)
+    for g in range(groups):
+        base = g * 3
+        for oc in range(out_channels):
+            idx, s = encode_tl2_triplet(int(flat[oc, base]), int(flat[oc, base + 1]), int(flat[oc, base + 2]))
+            index[g, oc] = idx
+            sign[g, oc] = s
+
+    tail_len = k_pad - main_len
+    tail_groups = tail_len // 2
+    tail_index = np.zeros((tail_groups, oc_stride), dtype=np.uint8)
+    tail_sign = np.zeros((tail_groups, oc_stride), dtype=np.uint8)
+    for g in range(tail_groups):
+        base = main_len + g * 2
+        for oc in range(out_channels):
+            idx, s = encode_tl1_pair(int(flat[oc, base]), int(flat[oc, base + 1]))
+            tail_index[g, oc] = idx
+            tail_sign[g, oc] = s
+
+    return index, sign, groups, oc_stride, main_len, tail_index, tail_sign, tail_groups, oc_stride
 
 
 def write_u32_layer_header(
@@ -269,6 +356,75 @@ def write_ternary_conv(
     out.write(bias.astype(np.float32).tobytes(order="C"))
 
 
+def write_ternary_conv_tl(
+    out,
+    name: str,
+    module: torch.nn.Module,
+    bn: torch.nn.BatchNorm2d,
+    npz: dict[str, np.ndarray] | None,
+    shape: dict[str, list[int]],
+    activation_scales: dict[str, float],
+    tl_group_size: int,
+) -> None:
+    safe_name = name.replace(".", "_")
+    if npz is not None and f"weights_{safe_name}" in npz and f"alpha_{safe_name}" in npz:
+        weight_np = np.asarray(npz[f"weights_{safe_name}"], dtype=np.int8)
+        alpha = float(np.asarray(npz[f"alpha_{safe_name}"], dtype=np.float32).item())
+    else:
+        conv_weight = module.weight.detach().cpu().numpy().astype(np.float32)
+        alpha = float(np.abs(conv_weight).mean())
+        weight_np = quantize_ternary(conv_weight, alpha)
+
+    ternary = weight_np.astype(np.int8)
+    flat = ternary.reshape(ternary.shape[0], -1)
+    k_pad = round_up(flat.shape[1], 32)
+    if k_pad != flat.shape[1]:
+        pad = np.zeros((flat.shape[0], k_pad - flat.shape[1]), dtype=np.int8)
+        flat = np.concatenate([flat, pad], axis=1)
+
+    gamma = bn.weight.detach().cpu().numpy().astype(np.float32)
+    beta = bn.bias.detach().cpu().numpy().astype(np.float32)
+    mean = bn.running_mean.detach().cpu().numpy().astype(np.float32)
+    var = bn.running_var.detach().cpu().numpy().astype(np.float32)
+    scale = (gamma / np.sqrt(var + float(bn.eps))) * alpha
+    bias = beta - (gamma / np.sqrt(var + float(bn.eps))) * mean
+    activation_scale = activation_scales[name]
+    activation_scale_bits = struct.unpack("<I", struct.pack("<f", activation_scale))[0]
+
+    index, sign, groups, oc_stride, tail_start, tail_index, tail_sign, tail_groups, tail_oc_stride = build_tl_group_major(flat, tl_group_size)
+
+    out_channels, in_channels, kernel_h, kernel_w = ternary.shape
+    output_h = shape["output_shape"][2]
+    output_w = shape["output_shape"][3]
+    write_u32_layer_header(
+        out,
+        KIND_TERNARY_TL,
+        in_channels,
+        out_channels,
+        kernel_h,
+        kernel_w,
+        module.stride[0],
+        module.stride[1],
+        module.padding[0],
+        module.padding[1],
+        output_h,
+        output_w,
+        k_pad,
+        1,
+        activation_scale_bits,
+        name,
+    )
+
+    out.write(struct.pack("<6I", tl_group_size, groups, oc_stride, tail_start, tail_groups, tail_oc_stride))
+    out.write(index.astype(np.uint8, copy=False).tobytes(order="C"))
+    out.write(sign.astype(np.uint8, copy=False).tobytes(order="C"))
+    if tail_groups > 0:
+        out.write(tail_index.astype(np.uint8, copy=False).tobytes(order="C"))
+        out.write(tail_sign.astype(np.uint8, copy=False).tobytes(order="C"))
+    out.write(scale.astype(np.float32).tobytes(order="C"))
+    out.write(bias.astype(np.float32).tobytes(order="C"))
+
+
 def write_linear(out, name: str, fc: torch.nn.Linear, shape: dict[str, list[int]]) -> None:
     weight = fc.weight.detach().cpu().numpy().astype(np.float32)
     bias = fc.bias.detach().cpu().numpy().astype(np.float32)
@@ -301,6 +457,8 @@ def build_model(
     npz: dict[str, np.ndarray] | None,
     activation_scales: dict[str, float],
     out_path: Path,
+    ternary_format: str,
+    tl_group_size: int,
 ) -> None:
     modules = named_modules(model)
     shapes = get_hook_shapes(model, sample_input)
@@ -350,8 +508,12 @@ def build_model(
             bn1 = modules[f"{block_name}.bn1"]
             conv2 = modules[f"{block_name}.conv2"]
             bn2 = modules[f"{block_name}.bn2"]
-            write_ternary_conv(out, f"{block_name}.conv1", conv1, bn1, npz, shapes[f"{block_name}.conv1"], activation_scales)
-            write_ternary_conv(out, f"{block_name}.conv2", conv2, bn2, npz, shapes[f"{block_name}.conv2"], activation_scales)
+            if ternary_format == "tl":
+                write_ternary_conv_tl(out, f"{block_name}.conv1", conv1, bn1, npz, shapes[f"{block_name}.conv1"], activation_scales, tl_group_size)
+                write_ternary_conv_tl(out, f"{block_name}.conv2", conv2, bn2, npz, shapes[f"{block_name}.conv2"], activation_scales, tl_group_size)
+            else:
+                write_ternary_conv(out, f"{block_name}.conv1", conv1, bn1, npz, shapes[f"{block_name}.conv1"], activation_scales)
+                write_ternary_conv(out, f"{block_name}.conv2", conv2, bn2, npz, shapes[f"{block_name}.conv2"], activation_scales)
             out.write(struct.pack("<I", 1 if has_proj else 0))
             if has_proj:
                 proj_conv = modules[f"{block_name}.shortcut.0"]
@@ -375,6 +537,8 @@ def main() -> None:
     parser.add_argument("npz_path", type=Path, help="Path to ternary_weights.npz")
     parser.add_argument("pth_path", type=Path, help="Path to ternary.pth")
     parser.add_argument("out_path", type=Path, help="Output model.bin path")
+    parser.add_argument("--ternary-format", choices=["tl", "int8"], default="tl", help="Ternary export format")
+    parser.add_argument("--tl-group-size", type=int, choices=[2, 3], default=2, help="TL group size (2=TL1, 3=TL2+TL1-tail)")
     parser.add_argument("--sample-input-bin", type=Path, default=None, help="Optional output path for raw float32 NCHW sample input")
     parser.add_argument("--sample-output-bin", type=Path, default=None, help="Optional output path for raw float32 NxC expected probabilities")
     args = parser.parse_args()
@@ -391,7 +555,7 @@ def main() -> None:
 
     sample_input = torch.from_numpy(np.asarray(npz["sample_input"], dtype=np.float32))
     activation_scales = collect_activation_scales(model, sample_input)
-    build_model(model, sample_input, npz, activation_scales, args.out_path)
+    build_model(model, sample_input, npz, activation_scales, args.out_path, args.ternary_format, args.tl_group_size)
     if args.sample_input_bin is not None or args.sample_output_bin is not None:
         if args.sample_input_bin is None or args.sample_output_bin is None:
             raise ValueError("provide both --sample-input-bin and --sample-output-bin")

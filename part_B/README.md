@@ -15,11 +15,12 @@ cmake --build build -j
 ```bash
 python convert_weights.py ../part_A/ternary_weights.npz ../part_A/ternary.pth model.bin \
 	--sample-input-bin ../part_A/sample_input.bin \
-	--sample-output-bin ../part_A/sample_output.bin
+	--sample-output-bin ../part_A/sample_output.bin \
+	--ternary-format tl --tl-group-size 2
 ```
 
-`convert_weights.py` now calibrates the 18 ternary conv inputs from the 16 sample images and emits a version-2 `model.bin` with padded int8 ternary weights plus per-layer activation scales.
-The runtime checks for AVX-VNNI at startup and uses the `vpdpbusd` path on supported Intel CPUs.
+`convert_weights.py` now calibrates the 18 ternary conv inputs from the 16 sample images and emits a version-2 `model.bin` with padded TL weights (default) plus per-layer activation scales.
+The runtime supports both `KIND_TERNARY_TL` (TL path) and `KIND_TERNARY_INT8` (legacy `vpdpbusd` path), preserving backward compatibility.
 `conv_ternary` now uses a streaming tile-stationary uint8 microkernel: each thread builds only a small spatial tile (`kSpatialTile x k_pad`) instead of materializing a full im2col tensor for the whole feature map.
 `model.bin` still stores only network weights/metadata (no embedded validation tensors), which keeps the file small.
 
@@ -34,12 +35,6 @@ The runtime checks for AVX-VNNI at startup and uses the `vpdpbusd` path on suppo
 Backward compatibility: if `model.bin` contains embedded samples from an older export, `--validate` without extra paths still works.
 
 ## Benchmark
-
-### Single-core (reference)
-
-```bash
-sudo taskset -c 0 nice -n -20 ./build/ternary_infer model.bin --bench --iters 3000 --warmup 50
-```
 
 ### Multi-core OpenMP (6 threads)
 

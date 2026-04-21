@@ -126,6 +126,18 @@ namespace ternary
                 return value;
             }
 
+            template <typename T>
+            T peek() const
+            {
+                if (offset_ + sizeof(T) > size_)
+                {
+                    throw std::runtime_error("unexpected end of model file");
+                }
+                T value;
+                std::memcpy(&value, data_ + offset_, sizeof(T));
+                return value;
+            }
+
             void read_bytes(void *dst, std::size_t count)
             {
                 if (offset_ + count > size_)
@@ -200,6 +212,7 @@ namespace ternary
                 throw std::runtime_error("expected ternary conv layer in model file");
             }
             TernaryConv2DWeights weights;
+            weights.storage_kind = TernaryStorageKind::kInt8;
             weights.in_channels = static_cast<int>(header.in_channels);
             weights.out_channels = static_cast<int>(header.out_channels);
             weights.kernel_h = static_cast<int>(header.kernel_h);
@@ -244,6 +257,7 @@ namespace ternary
                 throw std::runtime_error("expected int8 ternary conv layer in model file");
             }
             TernaryConv2DWeights weights;
+            weights.storage_kind = TernaryStorageKind::kInt8;
             weights.in_channels = static_cast<int>(header.in_channels);
             weights.out_channels = static_cast<int>(header.out_channels);
             weights.kernel_h = static_cast<int>(header.kernel_h);
@@ -260,6 +274,71 @@ namespace ternary
             reader.skip(header.name_len);
             const std::size_t packed = static_cast<std::size_t>(weights.out_channels) * weights.k_pad;
             read_vector(reader, weights.weights, packed);
+            read_vector(reader, weights.scale, weights.out_channels);
+            read_vector(reader, weights.bias, weights.out_channels);
+            return weights;
+        }
+
+        TernaryConv2DWeights read_ternary_conv_tl(Reader &reader)
+        {
+            const LayerHeader header = reader.read<LayerHeader>();
+            if (header.kind != static_cast<std::uint32_t>(LayerKind::kTernaryConvTL))
+            {
+                throw std::runtime_error("expected TL ternary conv layer in model file");
+            }
+
+            TernaryConv2DWeights weights;
+            weights.storage_kind = TernaryStorageKind::kTL1;
+            weights.in_channels = static_cast<int>(header.in_channels);
+            weights.out_channels = static_cast<int>(header.out_channels);
+            weights.kernel_h = static_cast<int>(header.kernel_h);
+            weights.kernel_w = static_cast<int>(header.kernel_w);
+            weights.stride_h = static_cast<int>(header.stride_h);
+            weights.stride_w = static_cast<int>(header.stride_w);
+            weights.padding_h = static_cast<int>(header.padding_h);
+            weights.padding_w = static_cast<int>(header.padding_w);
+            weights.output_h = static_cast<int>(header.output_h);
+            weights.output_w = static_cast<int>(header.output_w);
+            weights.k_pad = static_cast<int>(header.k_pad);
+
+            std::uint32_t activation_scale_bits = header.reserved;
+            std::memcpy(&weights.activation_scale, &activation_scale_bits, sizeof(float));
+            reader.skip(header.name_len);
+
+            const std::uint32_t tl_group_size = reader.read<std::uint32_t>();
+            const std::uint32_t tl_groups = reader.read<std::uint32_t>();
+            const std::uint32_t tl_oc_stride = reader.read<std::uint32_t>();
+            const std::uint32_t tl_tail_start = reader.read<std::uint32_t>();
+            const std::uint32_t tl1_tail_groups = reader.read<std::uint32_t>();
+            const std::uint32_t tl1_tail_oc_stride = reader.read<std::uint32_t>();
+
+            weights.tl_group_size = static_cast<int>(tl_group_size);
+            weights.tl_groups = static_cast<int>(tl_groups);
+            weights.tl_oc_stride = static_cast<int>(tl_oc_stride);
+            weights.tl_tail_start = static_cast<int>(tl_tail_start);
+            weights.tl1_tail_groups = static_cast<int>(tl1_tail_groups);
+            weights.tl1_tail_oc_stride = static_cast<int>(tl1_tail_oc_stride);
+
+            if (weights.tl_group_size == 3)
+            {
+                weights.storage_kind = TernaryStorageKind::kTL2;
+            }
+            else
+            {
+                weights.storage_kind = TernaryStorageKind::kTL1;
+            }
+
+            const std::size_t tl_main_count = static_cast<std::size_t>(weights.tl_groups) * weights.tl_oc_stride;
+            read_vector(reader, weights.tl_index, tl_main_count);
+            read_vector(reader, weights.tl_sign, tl_main_count);
+
+            if (weights.tl1_tail_groups > 0)
+            {
+                const std::size_t tail_count = static_cast<std::size_t>(weights.tl1_tail_groups) * weights.tl1_tail_oc_stride;
+                read_vector(reader, weights.tl1_tail_index, tail_count);
+                read_vector(reader, weights.tl1_tail_sign, tail_count);
+            }
+
             read_vector(reader, weights.scale, weights.out_channels);
             read_vector(reader, weights.bias, weights.out_channels);
             return weights;
@@ -300,12 +379,9 @@ namespace ternary
         {
             throw std::runtime_error("invalid model magic");
         }
-        if (header.version != 1)
+        if (header.version != 1 && header.version != 2)
         {
-            if (header.version != 2)
-            {
-                throw std::runtime_error("unsupported model version");
-            }
+            throw std::runtime_error("unsupported model version");
         }
 
         ResNet20Weights model;
@@ -325,8 +401,22 @@ namespace ternary
             }
             else
             {
-                block.conv1 = read_ternary_conv_v2(reader);
-                block.conv2 = read_ternary_conv_v2(reader);
+                const auto read_v2_compatible = [&reader]()
+                {
+                    const LayerHeader peek = reader.peek<LayerHeader>();
+                    if (peek.kind == static_cast<std::uint32_t>(LayerKind::kTernaryConvInt8))
+                    {
+                        return read_ternary_conv_v2(reader);
+                    }
+                    if (peek.kind == static_cast<std::uint32_t>(LayerKind::kTernaryConvTL))
+                    {
+                        return read_ternary_conv_tl(reader);
+                    }
+                    throw std::runtime_error("unexpected ternary layer kind in model file");
+                };
+
+                block.conv1 = read_v2_compatible();
+                block.conv2 = read_v2_compatible();
             }
             const std::uint32_t has_projection = reader.read<std::uint32_t>();
             if (has_projection != 0)

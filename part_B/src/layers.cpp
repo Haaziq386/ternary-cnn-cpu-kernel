@@ -6,6 +6,7 @@
 #include <omp.h>
 
 #include "ternary_kernel.h"
+#include "ternary_kernel_tl.h"
 
 #ifdef PROFILE_LAYERS
 #include <chrono>
@@ -154,6 +155,70 @@ namespace ternary
             }
         }
 
+        void conv_ternary_tl(const TernaryConv2DWeights &weights,
+                             const std::uint8_t *col_base,
+                             int batch,
+                             int output_spatial,
+                             float *out_base,
+                             bool fuse_relu)
+        {
+            const float *const scale_base = weights.scale.data();
+            const float *const bias_base = weights.bias.data();
+            const std::uint8_t *const tl_index = weights.tl_index.data();
+            const std::uint8_t *const tl_sign = weights.tl_sign.data();
+
+            const int groups = weights.tl_groups;
+            const int oc_stride = weights.tl_oc_stride;
+
+#pragma omp parallel for collapse(2) schedule(guided)
+            for (int n = 0; n < batch; ++n)
+            {
+                for (int spatial = 0; spatial < output_spatial; ++spatial)
+                {
+                    const std::uint8_t *act = col_base + ((static_cast<std::size_t>(n) * output_spatial + spatial) * weights.k_pad);
+                    float *sample_out = out_base + static_cast<std::size_t>(n) * weights.out_channels * output_spatial;
+
+                    for (int oc_base = 0; oc_base < weights.out_channels; oc_base += 16)
+                    {
+                        const int valid = std::min(16, weights.out_channels - oc_base);
+                        alignas(64) int acc[16] = {0};
+
+                        if (weights.storage_kind == TernaryStorageKind::kTL1)
+                        {
+                            dot_product_u8_tl1_16(act, tl_index, tl_sign, groups, oc_stride, oc_base, acc);
+                        }
+                        else
+                        {
+                            for (int lane = 0; lane < valid; ++lane)
+                            {
+                                const int oc = oc_base + lane;
+                                acc[lane] = dot_product_u8_tl2_scalar(act,
+                                                                      tl_index,
+                                                                      tl_sign,
+                                                                      groups,
+                                                                      oc_stride,
+                                                                      oc,
+                                                                      weights.tl_tail_start,
+                                                                      weights.tl1_tail_index.data(),
+                                                                      weights.tl1_tail_sign.data(),
+                                                                      weights.tl1_tail_groups,
+                                                                      weights.tl1_tail_oc_stride);
+                            }
+                        }
+
+                        for (int lane = 0; lane < valid; ++lane)
+                        {
+                            const int oc = oc_base + lane;
+                            const float output_scale = weights.activation_scale * scale_base[oc];
+                            const float value = static_cast<float>(acc[lane]) * output_scale + bias_base[oc];
+                            sample_out[static_cast<std::size_t>(oc) * output_spatial + spatial] =
+                                fuse_relu ? std::max(0.0f, value) : value;
+                        }
+                    }
+                }
+            }
+        }
+
     } // namespace
 
     void conv_fp32(const Tensor &input, const Conv2DWeightsFP32 &weights, Tensor &output,
@@ -229,6 +294,16 @@ namespace ternary
         const int packed_bytes = weights.k_pad;
         const std::uint8_t *col_base = im2col_buffer.data();
         float *out_base = output.ptr();
+
+        if (weights.storage_kind != TernaryStorageKind::kInt8)
+        {
+            conv_ternary_tl(weights, col_base, input.n, output_spatial, out_base, fuse_relu);
+#ifdef PROFILE_LAYERS
+            g_ternary_breakdown.dot_us += layer_elapsed_us(_dot_t0, std::chrono::steady_clock::now());
+#endif
+            return;
+        }
+
         const std::int8_t *const weight_base = weights.weights.data();
         const float *const scale_base = weights.scale.data();
         const float *const bias_base = weights.bias.data();

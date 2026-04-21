@@ -444,11 +444,21 @@ int main(int argc, char **argv)
 
     try
     {
-        if (!ternary::cpu_supports_avx_vnni())
-        {
-            throw std::runtime_error("this binary requires AVX-VNNI support");
-        }
         const ternary::ResNet20Weights model = ternary::load_model(model_path);
+        bool requires_vnni = false;
+        for (const auto &block : model.blocks)
+        {
+            if (block.conv1.storage_kind == ternary::TernaryStorageKind::kInt8 ||
+                block.conv2.storage_kind == ternary::TernaryStorageKind::kInt8)
+            {
+                requires_vnni = true;
+                break;
+            }
+        }
+        if (requires_vnni && !ternary::cpu_supports_avx_vnni())
+        {
+            throw std::runtime_error("this model requires AVX-VNNI support");
+        }
 
         if (validate)
         {

@@ -10,6 +10,7 @@ add_executable(ternary_infer
     src/model.cpp
     src/tensor.cpp
     src/ternary_kernel.cpp
+    src/ternary_kernel_tl.cpp
     src/layers.cpp
     src/resnet20.cpp
 )

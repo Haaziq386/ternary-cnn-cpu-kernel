@@ -49,6 +49,46 @@ The top-level README only reports the best controlled result.
 - New best median: `1105.48 us`
 - Session outcome: `1105.48 us` vs `1744.01 us` baseline best median, so the new INT8 path is faster on this machine.
 
+## S) Streaming tile-stationary im2col in `conv_ternary` --REVERTED
+
+Goal: remove the full uint8 im2col materialization pass by building and consuming only per-thread spatial tiles.
+
+### Change summary
+
+- Replaced full-buffer `im2col_u8` in `conv_ternary` with a streaming tile builder (`kSpatialTile x k_pad` per thread).
+- Reordered work to process `(batch, spatial_tile)` first, then output-channel groups so each quantized tile is reused immediately.
+- Shrank reserved `im2col_u8` scratch from full feature-map capacity to per-thread tile capacity.
+
+### Validation
+
+- `OK: 16/16 top-1 matches, max probability diff = 0.020357`
+
+### Benchmarks run for this change (single run before + single run after)
+
+Part B direct benchmark command:
+
+```bash
+taskset -c 0-5 env OMP_NUM_THREADS=6 ./build/ternary_infer model.bin --bench --iters 1000 --warmup 50
+```
+
+| Phase | mean (us) | median (us) | p99 (us) |
+|---|---:|---:|---:|
+| Before streaming refactor | 968.13 | 1022.24 | 1442.61 |
+| After streaming refactor | 1075.80 | 999.33 | 2034.71 |
+
+Part C comparison command:
+
+```bash
+"$(which python)" benchmark_static_int8_vs_cpp.py --skip-export --multi-cores 0-5 --single-core 0 --threads 6 --iters 1000 --warmup 50 --nice -5
+```
+
+| Phase | C++ mean (us) | C++ median (us) | C++ p99 (us) |
+|---|---:|---:|---:|
+| Before streaming refactor | 946.12 | 979.61 | 1375.87 |
+| After streaming refactor | 1019.84 | 976.08 | 1513.76 |
+
+Interpretation: median improved slightly in both measurement paths, while mean/p99 varied run-to-run on this machine.
+
 ---
 
 ## Raw Run History

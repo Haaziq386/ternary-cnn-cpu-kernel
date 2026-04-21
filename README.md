@@ -212,7 +212,7 @@ ONNX export also improves artifact size vs `.pth` checkpoints:
 - **Version-2 INT8 ternary weights** — the exporter now calibrates the 18 ternary conv inputs from the 16-sample batch and writes padded int8 weights plus per-layer activation scales.
 - **AVX-VNNI inner loop** — ternary convs accumulate with `_mm256_dpbusd_epi32` (`vpdpbusd`) over uint8 activations and signed int8 weights.
 - **BatchNorm folding** — BN parameters are folded into per-channel `scale` and `bias` at conversion time. Zero BN math at runtime.
-- **Fused quantized im2col** — input patches are quantized directly into uint8 during im2col so there is no separate cast pass.
+- **Streaming quantized im2col tiles** — input patches are quantized directly into a small per-thread tile buffer (`kSpatialTile x k_pad`) and consumed immediately by the VNNI kernel, avoiding full-feature-map im2col write/read traffic.
 - **Autotuned tile size** — `kSpatialTile=32` found via grid sweep over `{8,16,32,64}`. Doubles OpenMP work items vs the default 64, fixing Stage 3 (8×8) underutilization. Combined with `schedule(guided)` for adaptive chunk sizing.
 - **Lower OpenMP barrier overhead** — added `nowait` on key `omp for` hot loops where no cross-thread dependency exists, reducing unnecessary synchronization.
 - **Pre-allocated scratch buffers** — zero heap allocation during inference.
@@ -253,7 +253,7 @@ Static INT8 comparison note:
   - ORT ternary FP32 **309.08 / 290.23 / 564.94 us**
 - Interpretation: on this machine and policy, **static INT8 baseline is faster than both dynamic INT8 and FP32**. Static INT8 ternary is much faster than dynamic INT8 ternary, but still slower than static INT8 baseline.
 
-Further gains would require INT8 quantisation to use AVX-VNNI `vpdpbusd` (4× throughput) or a fused streaming im2col to keep activation data in L1 rather than L2.
+Further gains likely require reducing scalar FP32 work around the ternary conv path (residual add/ReLU/writeback traffic) and/or deeper kernel fusion beyond the current streaming VNNI conv implementation.
 
 The **memory story is strong**: ~12.6× smaller deploy-time model file with the same accuracy, zero floating-point multiplies in the hot path, and reduced memory bandwidth — the structural efficiency of ternary is real even if single-threaded latency doesn't match production libraries.
 

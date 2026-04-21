@@ -20,6 +20,7 @@ python convert_weights.py ../part_A/ternary_weights.npz ../part_A/ternary.pth mo
 
 `convert_weights.py` now calibrates the 18 ternary conv inputs from the 16 sample images and emits a version-2 `model.bin` with padded int8 ternary weights plus per-layer activation scales.
 The runtime checks for AVX-VNNI at startup and uses the `vpdpbusd` path on supported Intel CPUs.
+`conv_ternary` now uses a streaming tile-stationary uint8 microkernel: each thread builds only a small spatial tile (`kSpatialTile x k_pad`) instead of materializing a full im2col tensor for the whole feature map.
 `model.bin` still stores only network weights/metadata (no embedded validation tensors), which keeps the file small.
 
 ## Validate

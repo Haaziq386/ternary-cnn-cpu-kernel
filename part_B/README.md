@@ -38,7 +38,8 @@ Backward compatibility: if `model.bin` contains embedded samples from an older e
 ### Single-core (reference)
 
 ```bash
-sudo taskset -c 0 nice -n -20 ./build/ternary_infer model.bin --bench --iters 3000 --warmup 50
+sudo taskset -c 0 nice -n -20 env OMP_NUM_THREADS=1 \
+	./build/ternary_infer model.bin --bench --iters 3000 --warmup 50
 ```
 
 ### Multi-core OpenMP (6 threads)
@@ -48,5 +49,13 @@ OMP_NUM_THREADS=6 taskset -c 0-5 ./build/ternary_infer model.bin \
 	--bench --iters 3000 --warmup 50
 ```
 
-The validation path compares output probabilities against the Part A `sample_outputs` tensor (stored in `sample_output.bin`).
+Latest controlled output on this host:
 
+| Policy | mean (us) | median (us) | p99 (us) |
+|---|---:|---:|---:|
+| Single-core (`taskset -c 0`, `OMP_NUM_THREADS=1`) | 2439.15 | 2399.91 | 3363.80 |
+| Multi-core (`taskset -c 0-5`, `OMP_NUM_THREADS=6`) | 1013.43 | 1050.18 | 1397.70 |
+
+Multi-core vs single-core speedup: **2.41x** (mean), **2.29x** (median)
+
+The validation path compares output probabilities against the Part A `sample_outputs` tensor (stored in `sample_output.bin`).

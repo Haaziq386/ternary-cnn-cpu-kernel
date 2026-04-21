@@ -51,7 +51,7 @@ taskset -c 0-5 env OMP_NUM_THREADS=6 \
 # Part C — benchmark PyTorch and compare (latest C++ OpenMP best example)
 cd ../part_C
 python benchmark_pytorch.py \
-  --cpp-mean-us 1611.4 --cpp-median-us 1597.7 --cpp-p99-us 2328.5 \
+  --cpp-mean-us 1013.43 --cpp-median-us 1050.18 --cpp-p99-us 1397.70 \
   --iters 3000 --warmup 50
 
 # Part C — export ONNX models and benchmark ONNX Runtime (FP32)
@@ -123,15 +123,14 @@ A C++17 inference engine that loads the trained weights and runs ResNet-20 forwa
 
 **Key design decisions:**
 
-- **Dual-bitmap weight packing** — each ternary weight stored as two bits (`pos_bits`, `neg_bits`). The dot product reduces to masked float adds with zero floating-point multiplies in the inner loop.
-- **Lookup-table mask expansion** — a compile-time 256-entry table converts each byte of weight bits into an AVX2 mask in one L1 load, no arithmetic decode needed.
+- **Version-2 int8 ternary storage** — the exporter writes padded signed int8 ternary rows plus per-layer activation scales into `model.bin`. The loader still accepts the older v1 bit-packed format for compatibility.
+- **AVX-VNNI ternary inner loop** — packed uint8 activation tiles are multiplied against signed int8 ternary weights with `_mm256_dpbusd_epi32` in the hot path.
 - **BatchNorm folding** — BN parameters are folded into per-channel `scale` and `bias` at conversion time. Zero BN math at runtime.
-- **im2col → GEMM** — input patches are linearized so the inner loop walks contiguous memory. 4 parallel FP accumulators per dot product to hide add latency.
-- **Autotuned tile size** — `kSpatialTile=32` found via grid sweep over `{8,16,32,64}`. Doubles OpenMP work items vs the default 64, fixing Stage 3 (8×8) underutilization. Combined with `schedule(guided)` for adaptive chunk sizing.
-- **Lower OpenMP barrier overhead** — added `nowait` on key `omp for` hot loops where no cross-thread dependency exists, reducing unnecessary synchronization.
+- **Streaming quantized im2col tiles** — input patches are quantized into a per-thread tile buffer and consumed immediately, avoiding a full feature-map materialization pass.
+- **Autotuned tile size** — `kSpatialTile=32` found via grid sweep over `{8,16,32,64}`. Combined with `schedule(guided)` and `nowait` to improve load balance and cut barrier overhead.
 - **Pre-allocated scratch buffers** — zero heap allocation during inference.
 
-Build flags: `-O3 -march=native -mavx2 -mfma -mbmi2 -funroll-loops`
+Build flags: `-O3 -march=native -mavx2 -mfma -mbmi2 -funroll-loops -fno-math-errno -fomit-frame-pointer -ffp-contract=fast`
 
 **Validation output:**
 ```
@@ -142,7 +141,7 @@ OK: 16/16 top-1 matches, max probability diff = 0.020357
 
 ## Part C — Benchmark Results
 
-README shows the best controlled multi-core C++ result. Full benchmark history is in [RESULTS.md](RESULTS.md).
+README shows the latest controlled single-core reference and the best controlled multi-core C++ result. Full benchmark history is in [RESULTS.md](RESULTS.md).
 
 Controlled C++ methods:
 
@@ -166,7 +165,8 @@ Latest controlled rerun on this machine (April 2026):
 |---|---|---|---|
 | PyTorch baseline (FP32) | 1788.8 | 1700.5 | 3373.7 |
 | PyTorch ternary (TernaryConv2d) | 3330.4 | 3083.6 | 7012.4 |
-| **C++ INT8/VNNI ternary (OpenMP, 6 threads, latest)** | **1066.93** | **1105.48** | **1605.87** |
+| C++ INT8/VNNI ternary (single-core, latest) | 2439.15 | 2399.91 | 3363.80 |
+| **C++ INT8/VNNI ternary (OpenMP, 6 threads, latest)** | **1013.43** | **1050.18** | **1397.70** |
 | ORT FP32 baseline (`--threads 6`) | 329.8 | 321.6 | 607.5 |
 | ORT FP32 ternary (frozen wts, `--threads 6`) | 328.6 | 322.9 | 560.7 |
 
@@ -178,16 +178,16 @@ Exploratory C++ run at 8 threads (`taskset -c 0-7`, `OMP_NUM_THREADS=8`, `nice -
 
 ORT ternary uses `do_constant_folding=True` during export, so ternary quantization arithmetic is absorbed into Conv weight constants. ONNX Runtime executes standard FP32 convolutions and has no runtime awareness of ternary structure.
 
-### Speedup For 6 threads
+### Speedup For 6 threads vs single-core reference
 
 The C++ INT8/VNNI path is now **faster than PyTorch ternary** and **faster than the PyTorch FP32 baseline** on this machine, while ONNX Runtime FP32 still leads on absolute latency.
 
-- C++ INT8/VNNI OpenMP vs C++ single-core: **2.83x** (mean), **2.84x** (median)
-- C++ INT8/VNNI OpenMP vs PyTorch ternary: **3.12x** (mean), **2.79x** (median)
-- C++ INT8/VNNI OpenMP vs PyTorch baseline: **1.68x** (mean), **1.54x** (median)
+- C++ INT8/VNNI OpenMP vs C++ single-core: **2.41x** (mean), **2.29x** (median), **2.41x** (p99)
+- C++ INT8/VNNI OpenMP vs PyTorch ternary: **3.29x** (mean), **2.94x** (median)
+- C++ INT8/VNNI OpenMP vs PyTorch baseline: **1.77x** (mean), **1.62x** (median)
 - ORT baseline (`--threads 6`) vs PyTorch baseline: **5.42x** (mean), **5.29x** (median)
 - ORT ternary (`--threads 6`) vs PyTorch ternary: **10.14x** (mean), **9.55x** (median)
-- ORT ternary (`--threads 6`) vs C++ INT8/VNNI ternary (OpenMP, 6 threads): **3.26x** (mean), **3.42x** (median)
+- ORT ternary (`--threads 6`) vs C++ INT8/VNNI ternary (OpenMP, 6 threads): **3.08x** (mean), **3.25x** (median)
 
 ### Memory / Model Size
 
@@ -208,7 +208,7 @@ ONNX export also improves artifact size vs `.pth` checkpoints:
 - `baseline_fp32.onnx` is **13.19x smaller** than `baseline.pth` (**92.4% smaller**).
 - `ternary_fp32.onnx` is **4.68x smaller** than `ternary.pth` (**78.6% smaller**).
 
-### Why C++ is still slower than purely FP32 PyTorch
+### Why C++ is still slower than ONNX Runtime CPU
 - **Version-2 INT8 ternary weights** — the exporter now calibrates the 18 ternary conv inputs from the 16-sample batch and writes padded int8 weights plus per-layer activation scales.
 - **AVX-VNNI inner loop** — ternary convs accumulate with `_mm256_dpbusd_epi32` (`vpdpbusd`) over uint8 activations and signed int8 weights.
 - **BatchNorm folding** — BN parameters are folded into per-channel `scale` and `bias` at conversion time. Zero BN math at runtime.
@@ -232,6 +232,7 @@ Optimization history (single-core median, controlled runs):
 - M,N cache blocking: 5086.88 us
 - im2col fast path: 4862.89 us
 - 4-wide kernel + collapse(2): 4344.98 us
+- AVX-VNNI INT8 path (single-core reference): 2399.91 us, which is **1.81x** faster than the earlier 4-wide kernel + collapse(2) reference
 
 Full run history and failed experiments are in [RESULTS.md](RESULTS.md).
 

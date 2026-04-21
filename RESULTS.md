@@ -22,7 +22,7 @@ The top-level README only reports the best controlled result.
 ### Controlled multi-core runs (OpenMP)
 
 
-## R) Static INT8 ternary path with AVX-VNNI (`vpdpbusd`)
+## AB) Static INT8 ternary path with AVX-VNNI (`vpdpbusd`)
 
 ### Session baseline reference
 
@@ -49,7 +49,7 @@ The top-level README only reports the best controlled result.
 - New best median: `1105.48 us`
 - Session outcome: `1105.48 us` vs `1744.01 us` baseline best median, so the new INT8 path is faster on this machine.
 
-## S) Streaming tile-stationary im2col in `conv_ternary` --REVERTED
+## AC) Streaming tile-stationary im2col in `conv_ternary` --REVERTED
 
 Goal: remove the full uint8 im2col materialization pass by building and consuming only per-thread spatial tiles.
 
@@ -140,7 +140,7 @@ sudo taskset -c 0 nice -n -20 ./build/ternary_infer model.bin --bench --iters 30
 | 5 | 5389.29 | 5311.43 | 6865.71 |
 | 6 | 5410.37 | 5335.79 | 6928.59 |
 
-### F) With Fused ReLU in conv1 layer -> DECREASE -SO Removed
+### F) With Fused ReLU in conv1 layer
 
 | Run | mean (us) | median (us) | p99 (us) |
 |---|---:|---:|---:|
@@ -149,7 +149,7 @@ sudo taskset -c 0 nice -n -20 ./build/ternary_infer model.bin --bench --iters 30
 | 3 | 5760.36 | 5707.11 | 7283.31 |
 | 4 | 5884.69 | 5823.44 | 7567.69 |
 
-### G) Extend to 4+4 accumulators in dot_product_ternary_avx2 ->commented out
+### G) Extend to 4+4 accumulators in dot_product_ternary_avx2 -> Reverted
 
 
 | Run | mean (us) | median (us) | p99 (us) |
@@ -374,7 +374,7 @@ Model-size efficiency from ONNX export:
 |---|---:|
 | baseline.pth | 1111.9 KB |
 | ternary.pth | 1111.3 KB |
-| model.bin (packed ternary, no embedded validation tensors) | 88.0 KB |
+| model.bin (packed ternary, no embedded validation tensors) | 284.6 KB |
 | sample_input.bin (validation input, external) | 192.0 KB |
 | sample_output.bin (validation expected output, external) | 0.6 KB |
 | baseline_fp32.onnx | 84.3 KB |
@@ -382,7 +382,7 @@ Model-size efficiency from ONNX export:
 
 Notes:
 - `model.bin` is now slimmed to weights/metadata only; validation tensors are stored separately.
-- Combined size of `model.bin` + validation bins is ~280.6 KB, but deploy-time inference only needs `model.bin`.
+- Combined size of `model.bin` + validation bins is ~477.2 KB, but deploy-time inference only needs `model.bin`.
 
 - `baseline_fp32.onnx` is **13.19x smaller** than `baseline.pth` (**92.4% smaller**).
 - `ternary_fp32.onnx` is **4.68x smaller** than `ternary.pth` (**78.6% smaller**).
@@ -457,9 +457,9 @@ pressure by ×4, guaranteeing accumulator or mask spills to the stack on every i
 
 ### Best 6-thread OpenMP run (kST=32, guided, latest)
 
-- mean: **1611.4 us**
-- median: **1597.7 us**
-- p99: **2328.5 us**
+- mean: **1013.43 us**
+- median: **1050.18 us**
+- p99: **1397.70 us**
 
 ### Improvement Chain (full history)
 
@@ -501,13 +501,13 @@ OMP_NUM_THREADS=6 MKL_NUM_THREADS=6 OPENBLAS_NUM_THREADS=6 \
 
 ## Latest Cross-Framework Comparison (kST=32 + guided, 6-thread OpenMP)
 
-Best C++ result from section X (autotune controlled rerun) below.
+Best C++ result from section AB (latest controlled rerun) below.
 
 | Implementation | mean (us) | median (us) | p99 (us) |
 |---|---:|---:|---:|
 | PyTorch baseline (FP32) | 1788.8 | 1700.5 | 3373.7 |
 | PyTorch ternary | 3330.4 | 3083.6 | 7012.4 |
-| C++ ternary (OpenMP, 6 threads) | 1611.4 | 1597.7 | 2328.5 |
+| C++ ternary (OpenMP, 6 threads) | 1013.43 | 1050.18 | 1397.70 |
 
 Speedups:
 - vs PyTorch ternary: **2.07x** (mean), **1.93x** (median)
@@ -966,4 +966,3 @@ taskset -c 0 "$(which python)" benchmark_onnx.py --threads 1 --iters 3000 --warm
    - `ternary_fp32.onnx`: 237.6 KB
    - `ternary_dynamic_int8.onnx`: 1202.8 KB
    - `ternary_static_int8.onnx`: 1323.4 KB
-

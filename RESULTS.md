@@ -21,6 +21,49 @@ The top-level README only reports the best controlled result.
 
 ### Controlled multi-core runs (OpenMP)
 
+## AB) TL (Ternary Lookup Table) kernel
+
+### Session baseline (old code, pre-change)
+
+- Command used: `taskset -c 0-5 env OMP_NUM_THREADS=6 ./build/ternary_infer model.bin --bench --iters 3000 --warmup 50`
+- Five medians: `1098.55 us`, `1122.76 us`, `1087.31 us`, `1092.14 us`, `1109.07 us`
+- Best baseline median: `1087.31 us`
+
+### TL implementation summary
+
+- Implemented TL as the primary ternary convolution path with a new model kind `KIND_TERNARY_TL=4`.
+- Implemented TL1 (group size `g=2`) vector kernel in `part_B/src/ternary_kernel_tl.cpp`:
+  - Uses `vpshufb` (`_mm_shuffle_epi8`) for lookup.
+  - Uses signed/unsigned split storage (`index` and `sign` arrays, group-major by output channel tile).
+  - Uses int16 intermediate lookup values with periodic widening to int32 for accumulation safety.
+- Added TL2 scalar reference kernel and TL2 file-format support (with TL1 tail path for remainder), but this benchmark exported TL1.
+- Backward compatibility preserved:
+  - `KIND_TERNARY_INT8 (=3)` still uses the old AVX-VNNI `vpdpbusd` path.
+  - `KIND_TERNARY_TL (=4)` uses TL path.
+
+### Session TL benchmark (new code)
+
+- Same command/protocol (5 runs, 3000 iters, warmup 50, pinned `0-5`, `OMP_NUM_THREADS=6`):
+- Five medians: `3192.25 us`, `3242.53 us`, `3359.22 us`, `3567.50 us`, `3696.91 us`
+- Best TL median: `3192.25 us`
+
+### Comparison vs I2_S baseline
+
+- Baseline best median: `1087.31 us`
+- TL best median: `3192.25 us`
+- Outcome: TL is slower on this machine in this implementation (`~2.94x` slower by median).
+
+### Expected vs actual behavior on Alder Lake
+
+- Expected: TL might or might not beat I2_S depending on LUT setup overhead vs weight-load cost.
+- Actual: TL did not beat `vpdpbusd` here.
+
+Hypothesis:
+- `vpdpbusd` has very high throughput on Alder Lake and the current I2_S path is already strongly optimized.
+- TL1 incurs per-group LUT setup work from activations and extra shuffle/sign handling.
+- The smaller `k_pad` regime in this model keeps int8 weights cache-friendly, reducing the memory-load advantage TL aims to exploit.
+- Additional register pressure and widen/accumulate steps (int16->int32) likely increase instruction overhead.
+
 
 ## R) Static INT8 ternary path with AVX-VNNI (`vpdpbusd`)
 

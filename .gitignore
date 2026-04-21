@@ -27,7 +27,7 @@ part_C/onnx_models/
 
 # Part B build artifacts
 part_B/build/
-part_B/model.bin
+*.bin
 part_B/ternary_infer
 part_B/DESIGN.md
 

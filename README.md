@@ -27,7 +27,8 @@ cd ../part_B
 cmake -S . -B build -DPROFILE_LAYERS=ON && cmake --build build -j
 python convert_weights.py ../part_A/ternary_weights.npz ../part_A/ternary.pth model.bin \
   --sample-input-bin ../part_A/sample_input.bin \
-  --sample-output-bin ../part_A/sample_output.bin
+  --sample-output-bin ../part_A/sample_output.bin \
+  --ternary-format tl --tl-group-size 2
 
 # Validate: C++ output must match PyTorch reference
 ./build/ternary_infer model.bin --validate \
@@ -37,11 +38,8 @@ python convert_weights.py ../part_A/ternary_weights.npz ../part_A/ternary.pth mo
 # Benchmark: single-image latency
 ./build/ternary_infer model.bin --bench --iters 1000 --warmup 10
 
-# Part B benchmark (controlled single-core)
-sudo taskset -c 0 nice -n -20 ./build/ternary_infer model.bin --bench --iters 3000 --warmup 50
-
-# Part B benchmark (OpenMP multi-core, 6 threads)
-sudo taskset -c 0-5 nice -n -20 env OMP_NUM_THREADS=6 \
+# Part B benchmark (OpenMP multi-core, 6 threads, no sudo)
+taskset -c 0-5 env OMP_NUM_THREADS=6 \
   ./build/ternary_infer model.bin --bench --iters 3000 --warmup 50
 
 # Part B benchmark + perf-like runtime counters (PROFILE_LAYERS build only)
@@ -120,6 +118,11 @@ Trained for 30 epochs (reduced from 200 for time). Full 200-epoch runs yield ~91
 ## Part B — C++ Inference Engine
 
 A C++17 inference engine that loads the trained weights and runs ResNet-20 forward passes using AVX2 SIMD.
+
+Current ternary runtime supports two coexisting formats:
+
+- `KIND_TERNARY_INT8 (=3)` -> legacy AVX-VNNI `vpdpbusd` path.
+- `KIND_TERNARY_TL (=4)` -> TL path (default export in converter).
 
 **Key design decisions:**
 
@@ -234,6 +237,8 @@ Optimization history (single-core median, controlled runs):
 - 4-wide kernel + collapse(2): 4344.98 us
 
 Full run history and failed experiments are in [RESULTS.md](RESULTS.md).
+
+Recent TL session summary (April 21, 2026): TL validated correctly (`16/16` matches, max diff `0.020357`) but did not beat the existing I2_S path on this Alder Lake host (best median `3192.25 us` TL vs `1087.31 us` baseline).
 
 Dynamic INT8 comparison note (same pinned policy):
 `model.bin` is **~3.9× smaller** than `ternary.pth` — version-2 int8 ternary storage keeps the model compact while trading size for a much faster AVX-VNNI runtime path, and it no longer stores validation samples in the model artifact.
